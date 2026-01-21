@@ -14,7 +14,7 @@ requires-python = ">=3.8"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "Topic :: Software Development :: Build Tools",
+    "Topic :: Topic :: Utilities",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
@@ -39,12 +39,15 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/pip-search-ex"
-Repository = "https://github.com/yourusername/pip-search-ex"
-"Bug Reports" = "https://github.com/yourusername/pip-search-ex/issues"
+Homepage = "https://github.com/gitdwarf/pip-search-ex"
+Repository = "https://github.com/gitdwarf/pip-search-ex"
+"Bug Reports" = "https://github.com/gitdwarf/pip-search-ex/issues"
 
 [project.scripts]
 pip-search-ex = "pip_search_ex:main"
+
+[tool.setuptools]
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -52,4 +55,4 @@ include = ["core", "core.*", "tui", "tui.*", "raw", "raw.*"]
 exclude = ["tests*", "__pycache__"]
 
 [tool.setuptools.package-data]
-"" = ["themes/*.xml"]
+"*" = ["themes/*.xml"]
