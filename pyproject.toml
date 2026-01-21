@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pip-search-ex"
+version = "1.0.7"
+authors = [
+    {name = "thedwarf", email = "python@dwarven.com"},
+]
+description = "Extended pip search with TUI interface and package management"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Utilities",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: Console",
+]
+keywords = ["pip", "search", "package", "manager", "tui", "terminal"]
+dependencies = [
+    "requests>=2.25.0",
+    "wcwidth>=0.2.0",
+    "textual>=0.47.0",
+    "packaging>=20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build",
+    "twine",
+]
+
+[project.urls]
+Homepage = "https://github.com/gitdwarf/pip-search-ex"
+Repository = "https://github.com/gitdwarf/pip-search-ex"
+"Bug Reports" = "https://github.com/gitdwarf/pip-search-ex/issues"
+
+[project.scripts]
+pip-search-ex = "pip_search_ex.p_s_e:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pip_search_ex", "pip_search_ex.*"]
+exclude = ["tests*", "__pycache__"]
+
+[tool.setuptools.package-data]
+"*" = ["themes/*.xml"]
