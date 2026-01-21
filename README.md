@@ -61,8 +61,10 @@ In TUI mode, you can:
   - Update (for outdated packages)
   - Reinstall (for installed packages)
   - Uninstall (for installed packages)
+  - Downgrade (for installed packages that are newer-than-server version)
 - **Press 't'** to change themes on the fly
 - **Press 'q'** to quit
+- **Press 'esc' twice** to quit
 
 ## Raw Mode
 
