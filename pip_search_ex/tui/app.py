@@ -1,5 +1,5 @@
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable, Footer, OptionList, Static, Label
+from textual.widgets import DataTable, Footer, OptionList, Static, Label, Input
 from textual.widgets.option_list import Option
 from textual.containers import Container, Vertical
 from textual.reactive import reactive
@@ -69,6 +69,68 @@ class ThemeSelectorScreen(ModalScreen):
             self.dismiss(None)
 
 
+class SearchScreen(ModalScreen[str]):
+    """Modal screen for entering a new search query."""
+
+    CSS = """
+    SearchScreen {
+        align: center middle;
+    }
+
+    #search-dialog {
+        width: 60;
+        height: auto;
+        border: thick $background 80%;
+        background: $surface;
+        padding: 2;
+    }
+
+    #search-title {
+        width: 100%;
+        content-align: center middle;
+        text-style: bold;
+        padding: 0 0 1 0;
+    }
+
+    Input {
+        width: 100%;
+        margin: 1 0;
+    }
+
+    #search-hint {
+        width: 100%;
+        content-align: center middle;
+        color: $text-muted;
+        padding: 1 0 0 0;
+    }
+    """
+
+    def __init__(self, current_query: str = ""):
+        super().__init__()
+        self.current_query = current_query
+
+    def compose(self) -> ComposeResult:
+        with Container(id="search-dialog"):
+            yield Static("Search PyPI Packages", id="search-title")
+            search_input = Input(placeholder="Enter package name...", value=self.current_query, id="search-input")
+            yield search_input
+            yield Static("Press Enter to search, Escape to cancel", id="search-hint")
+
+    def on_mount(self) -> None:
+        """Focus the input when mounted."""
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter key in input."""
+        query = event.value.strip().lower()
+        self.dismiss(query)
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle escape key to cancel."""
+        if event.key == "escape":
+            self.dismiss(None)
+
+
 class PackageActionScreen(ModalScreen):
     """Modal screen for package actions."""
 
@@ -119,7 +181,9 @@ class PackageActionScreen(ModalScreen):
                 options.append(Option("Install", id="install"))
             elif self.package['status'] == "Outdated":
                 options.append(Option(f"Update to {self.package['latest']}", id="update"))
-                options.append(Option("Reinstall", id="reinstall"))
+                options.append(Option("Uninstall", id="uninstall"))
+            elif self.package['status'] == "Newer":
+                options.append(Option(f"Downgrade to {self.package['latest']}", id="downgrade"))
                 options.append(Option("Uninstall", id="uninstall"))
             else:  # Installed and up-to-date
                 options.append(Option("Reinstall", id="reinstall"))
@@ -195,25 +259,6 @@ class ProgressScreen(ModalScreen):
             self.dismiss()
 
 
-class ClickableDataTable(DataTable):
-    """DataTable with clickable rows."""
-
-    def on_click(self, event: events.Click) -> None:
-        """Handle row clicks - update cursor position first."""
-        # Get the row that was clicked
-        try:
-            # Move cursor to clicked row
-            if event.y > 0:  # Skip header row
-                row = event.y - 1  # Adjust for header
-                if 0 <= row < self.row_count:
-                    self.move_cursor(row=row)
-                    # Then trigger the action
-                    if self.app and hasattr(self.app, 'action_show_package_actions'):
-                        self.app.action_show_package_actions()
-        except:
-            pass
-
-
 class PipSearchApp(App):
     """TUI application for searching PyPI packages."""
 
@@ -238,6 +283,7 @@ class PipSearchApp(App):
         ("q", "quit", "Quit"),
         ("t", "show_theme_selector", "Theme"),
         ("enter", "show_package_actions", "Actions"),
+        ("s", "show_search", "Search"),
     ]
 
     current_theme_name = reactive("default")
@@ -252,7 +298,7 @@ class PipSearchApp(App):
         self._initial_theme_name = theme_entry.get("name", "default")
 
     def compose(self) -> ComposeResult:
-        self.table = ClickableDataTable()
+        self.table = DataTable()
         yield self.table
         yield Footer()
 
@@ -282,6 +328,39 @@ class PipSearchApp(App):
             handle_theme_selection
         )
 
+    def action_show_search(self):
+        """Show the search input modal."""
+        def handle_search(query: str | None):
+            if query is not None:  # None = cancelled, "" = search all
+                self.search_query = query
+                self._perform_search()
+
+        self.push_screen(
+            SearchScreen(self.search_query),
+            handle_search
+        )
+
+    @work(exclusive=True)
+    async def _perform_search(self):
+        """Perform a new search with the current query."""
+        from pip_search_ex.core.pypi import gather_packages
+
+        # Show loading message
+        self.notify(f"Searching for '{self.search_query}'..." if self.search_query else "Loading all packages...")
+
+        # Fetch new results
+        self.pkgs = gather_packages(self.search_query)
+
+        # Rebuild table
+        self._build_table()
+
+        # Show result count
+        count = len(self.pkgs)
+        if self.search_query:
+            self.notify(f"Found {count} package{'s' if count != 1 else ''} matching '{self.search_query}'")
+        else:
+            self.notify(f"Showing all packages (limited to {count})")
+
     def _get_selected_package(self):
         """Get the currently selected package info."""
         if not self.table or self.table.cursor_row is None:
@@ -291,20 +370,25 @@ class PipSearchApp(App):
         return self.pkgs[self.table.cursor_row]
 
     def action_show_package_actions(self):
-        """Show the package action menu."""
+        """Show the package action menu for currently selected row."""
         pkg = self._get_selected_package()
         if not pkg:
             self.notify("No package selected", severity="warning")
             return
+        self._show_package_actions_for(pkg)
 
+    def _show_package_actions_for(self, pkg):
+        """Show the package action menu for a specific package."""
         def handle_action(action: str | None):
-            if not action:
+            if not action or action == "cancel":
                 return
 
             if action == "install":
                 self._run_pip_install(pkg['name'])
             elif action == "update":
                 self._run_pip_install(pkg['name'], upgrade=True)
+            elif action == "downgrade":
+                self._run_pip_install(pkg['name'], downgrade=True)
             elif action == "reinstall":
                 self._run_pip_install(pkg['name'], reinstall=True)
             elif action == "uninstall":
@@ -316,15 +400,17 @@ class PipSearchApp(App):
         )
 
     @work(exclusive=True)
-    async def _run_pip_install(self, package: str, upgrade: bool = False, reinstall: bool = False):
+    async def _run_pip_install(self, package: str, upgrade: bool = False, downgrade: bool = False, reinstall: bool = False):
         """Run pip install in background."""
-        action = "Reinstalling" if reinstall else ("Updating" if upgrade else "Installing")
+        action = "Reinstalling" if reinstall else ("Downgrading" if downgrade else ("Updating" if upgrade else "Installing"))
         progress = ProgressScreen(f"{action} {package}")
         self.push_screen(progress)
 
         cmd = [sys.executable, "-m", "pip", "install"]
         if upgrade:
             cmd.append("--upgrade")
+        if downgrade:
+            cmd.append("--force-reinstall")
         if reinstall:
             cmd.extend(["--force-reinstall", "--no-deps"])
         cmd.append(package)
@@ -341,12 +427,12 @@ class PipSearchApp(App):
             progress.update_content(output)
 
             if result.returncode == 0:
-                action_past = "reinstalled" if reinstall else ("updated" if upgrade else "installed")
+                action_past = "reinstalled" if reinstall else ("downgraded" if downgrade else ("updated" if upgrade else "installed"))
                 self.notify(f"Successfully {action_past} {package}", severity="information")
                 # Refresh package data
                 await self._refresh_packages()
             else:
-                action_past = "reinstall" if reinstall else ("update" if upgrade else "install")
+                action_past = "reinstall" if reinstall else ("downgrade" if downgrade else ("update" if upgrade else "install"))
                 self.notify(f"Failed to {action_past} {package}", severity="error")
         except Exception as e:
             progress.update_content(f"Error: {str(e)}")
