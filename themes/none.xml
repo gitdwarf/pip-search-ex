@@ -1,0 +1,18 @@
+<theme name="none">
+  <aliases>
+    <alias>--theme-none</alias>
+    <alias>--no-color</alias>
+    <alias>--no-colour</alias>
+    <alias>--nc</alias>
+  </aliases>
+
+  <colors>
+    <installed>#ffffff</installed>
+    <outdated>#ffffff</outdated>
+    <not_installed>#ffffff</not_installed>
+    <error>#ffffff</error>
+    <header>#ffffff</header>
+    <border>#ffffff</border>
+    <default>#ffffff</default>
+  </colors>
+</theme>

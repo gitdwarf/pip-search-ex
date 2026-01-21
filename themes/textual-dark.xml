@@ -1,0 +1,17 @@
+<theme name="textual-dark">
+  <aliases>
+    <alias>--theme-textual-dark</alias>
+    <alias>--textual-dark</alias>
+    <alias>--dark</alias>
+  </aliases>
+
+  <colors>
+    <installed>#8be9fd</installed>
+    <outdated>#f1fa8c</outdated>
+    <not_installed>#aaaaaa</not_installed>
+    <error>#ff5555</error>
+    <header>#bd93f9</header>
+    <border>#44475a</border>
+    <default>#f8f8f2</default>
+  </colors>
+</theme>
