@@ -1,0 +1,16 @@
+<theme name="solarized-dark">
+  <aliases>
+    <alias>--theme-solarized-dark</alias>
+    <alias>--solarized-dark</alias>
+  </aliases>
+
+  <colors>
+    <installed>#859900</installed>
+    <outdated>#b58900</outdated>
+    <not_installed>#93a1a1</not_installed>
+    <error>#dc322f</error>
+    <header>#268bd2</header>
+    <border>#073642</border>
+    <default>#93a1a1</default>
+  </colors>
+</theme>

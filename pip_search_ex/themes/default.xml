@@ -1,0 +1,16 @@
+<theme name="default">
+  <aliases>
+    <alias>--theme-default</alias>
+    <alias>--theme</alias>
+  </aliases>
+
+  <colors>
+    <installed>#00ff00</installed>
+    <outdated>#ffff00</outdated>
+    <not_installed>#808080</not_installed>
+    <error>#ff0000</error>
+    <header>#ffffff</header>
+    <border>#ffffff</border>
+    <default>#ffffff</default>
+  </colors>
+</theme>
