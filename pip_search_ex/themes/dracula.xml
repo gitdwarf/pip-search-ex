@@ -1,0 +1,16 @@
+<theme name="dracula">
+  <aliases>
+    <alias>--theme-dracula</alias>
+    <alias>--dracula</alias>
+  </aliases>
+
+  <colors>
+    <installed>#50fa7b</installed>
+    <outdated>#f1fa8c</outdated>
+    <not_installed>#f8f8f2</not_installed>
+    <error>#ff5555</error>
+    <header>#bd93f9</header>
+    <border>#44475a</border>
+    <default>#f8f8f2</default>
+  </colors>
+</theme>
