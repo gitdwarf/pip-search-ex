@@ -1,0 +1,18 @@
+<theme name="rose-pine-moon">
+  <aliases>
+    <alias>--theme-rose-pine-moon</alias>
+    <alias>--rose-pine-moon</alias>
+    <alias>--rose-moon</alias>
+    <alias>--trpm</alias>
+  </aliases>
+
+  <colors>
+    <installed>#9ccfd8</installed>
+    <outdated>#f6c177</outdated>
+    <not_installed>#e0def4</not_installed>
+    <error>#eb6f92</error>
+    <header>#c4a7e7</header>
+    <border>#2a273f</border>
+    <default>#e0def4</default>
+  </colors>
+</theme>

@@ -1,0 +1,18 @@
+<theme name="rose-pine-dawn">
+  <aliases>
+    <alias>--theme-rose-pine-dawn</alias>
+    <alias>--rose-pine-dawn</alias>
+    <alias>--rose-dawn</alias>
+    <alias>--trpd</alias>
+  </aliases>
+
+  <colors>
+    <installed>#56949f</installed>
+    <outdated>#ea9d34</outdated>
+    <not_installed>#575279</not_installed>
+    <error>#b4637a</error>
+    <header>#907aa9</header>
+    <border>#cecacd</border>
+    <default>#575279</default>
+  </colors>
+</theme>

@@ -1,0 +1,17 @@
+<theme name="atom-one-light">
+  <aliases>
+    <alias>--theme-atom-one-light</alias>
+    <alias>--atom-one-light</alias>
+    <alias>--taol</alias>
+  </aliases>
+
+  <colors>
+    <installed>#98c379</installed>
+    <outdated>#e5c07b</outdated>
+    <not_installed>#383a42</not_installed>
+    <error>#e45649</error>
+    <header>#4078f2</header>
+    <border>#d3d3d3</border>
+    <default>#383a42</default>
+  </colors>
+</theme>
