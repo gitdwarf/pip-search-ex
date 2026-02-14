@@ -2,6 +2,9 @@
 
 All notable changes to pip-search-ex will be documented in this file.
 
+## [2.0.2] - 2026-02-15
+- **Fixed cache display and logger**: Fixing cache status and logging to behaving correctly as per the use (or not) of --status
+
 ## [2.0.1] - 2026-02-15
 - **Auto restart after self update**: Now will auto restart with the same search if an auto update was requested
 
