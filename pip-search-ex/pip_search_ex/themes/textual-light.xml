@@ -1,0 +1,18 @@
+<theme name="textual-light">
+  <aliases>
+    <alias>--theme-textual-light</alias>
+    <alias>--textual-light</alias>
+    <alias>--light</alias>
+    <alias>--ttxl</alias>
+  </aliases>
+
+  <colors>
+    <installed>#22863a</installed>
+    <outdated>#b08800</outdated>
+    <not_installed>#666666</not_installed>
+    <error>#d73a49</error>
+    <header>#24292e</header>
+    <border>#cccccc</border>
+    <default>#24292e</default>
+  </colors>
+</theme>

@@ -1,0 +1,18 @@
+<theme name="textual-ansi">
+  <aliases>
+    <alias>--theme-textual-ansi</alias>
+    <alias>--textual-ansi</alias>
+    <alias>--ansi</alias>
+    <alias>--ttxa</alias>
+  </aliases>
+
+  <colors>
+    <installed>#00ff00</installed>
+    <outdated>#ffff00</outdated>
+    <not_installed>#c0c0c0</not_installed>
+    <error>#ff0000</error>
+    <header>#ffffff</header>
+    <border>#808080</border>
+    <default>#f0f0f0</default>
+  </colors>
+</theme>
