@@ -1,0 +1,18 @@
+<theme name="light-terminal">
+  <aliases>
+    <alias>--theme-light-terminal</alias>
+    <alias>--light-terminal</alias>
+    <alias>--lterm</alias>
+    <alias>--inverse</alias>
+  </aliases>
+
+  <colors>
+    <installed>#008000</installed>      <!-- Dark green for installed -->
+    <outdated>#cc5200</outdated>        <!-- Dark orange for outdated -->
+    <not_installed>#666666</not_installed>  <!-- Medium gray for not installed -->
+    <e>#cc0000</e>              <!-- Red for errors -->
+    <header>#0066cc</header>            <!-- Dark blue for headers -->
+    <border>#888888</border>            <!-- Medium gray for borders -->
+    <default>#000000</default>          <!-- Black for default text -->
+  </colors>
+</theme>

@@ -1,0 +1,17 @@
+<theme name="flexoki">
+  <aliases>
+    <alias>--theme-flexoki</alias>
+    <alias>--flexoki</alias>
+    <alias>--tflx</alias>
+  </aliases>
+
+  <colors>
+    <installed>#7c9f4b</installed>
+    <outdated>#d0a215</outdated>
+    <not_installed>#e6e4d9</not_installed>
+    <error>#d14d41</error>
+    <header>#3f6e9b</header>
+    <border>#5b534a</border>
+    <default>#e6e4d9</default>
+  </colors>
+</theme>
