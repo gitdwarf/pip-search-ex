@@ -2,6 +2,9 @@
 
 All notable changes to pip-search-ex will be documented in this file.
 
+## [2.0.3] - 2026-02-22
+- **Update to offline cache**: Renamed from enhanced to extended, and split version into its own sub cache
+
 ## [2.0.2] - 2026-02-15
 - **Fixed cache display and logger**: Fixing cache status and logging to behaving correctly as per the use (or not) of --status
 
