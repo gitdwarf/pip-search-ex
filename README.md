@@ -187,4 +187,12 @@ thedwarf
 
 ## License
 
+## Support / Tip Jar
+
+If you find **pip-search-ex** useful, you can support the project with a small tip:
+
+[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-blue?logo=paypal)](https://www.paypal.com/paypalme/gitdwarf)
+
+Every contribution helps keep development going! Thank you 🙏
+
 MIT License - see LICENSE file for details
