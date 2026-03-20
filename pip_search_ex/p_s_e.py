@@ -27,7 +27,7 @@ def parse_args():
     )
     p.add_argument("--version", action="version", version=f"pip-search-ex {get_version()}")
     p.add_argument("query", nargs="?", default="")
-    p.add_argument("--raw", action="store_true", help="Raw table output (no TUI)")
+    p.add_argument("--raw", action="count", default=0, help="Raw table output. Use twice for CSV.")
 
     # Cache control
     p.add_argument("--flush", "--force-refresh", action="store_true", dest="flush",
@@ -97,7 +97,7 @@ def main():
     if a.raw:
         # Raw mode: pass function + params, it handles everything
         from pip_search_ex.raw.renderer import run_raw_mode
-        run_raw_mode(query, theme_entry, gather_packages, gather_kwargs, filters)
+        run_raw_mode(query, theme_entry, gather_packages, gather_kwargs, filters, raw_level=a.raw)
     else:
         # TUI mode: Launch immediately with empty data, search in background
         # This prevents blocking before TUI even starts

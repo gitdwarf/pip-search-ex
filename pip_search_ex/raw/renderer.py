@@ -3,7 +3,7 @@ from pip_search_ex.core.spinner import Spinner
 from pip_search_ex.raw.table import print_table
 
 
-def run_raw_mode(query, theme_entry, gather_packages, gather_kwargs, filters):
+def run_raw_mode(query, theme_entry, gather_packages, gather_kwargs, filters, raw_level=1):
     """Raw table mode - fetches data and renders table.
     
     Args:
@@ -12,6 +12,7 @@ def run_raw_mode(query, theme_entry, gather_packages, gather_kwargs, filters):
         gather_packages: Function to call for fetching packages
         gather_kwargs: Kwargs to pass to gather_packages (search params)
         filters: Dict of display filters {installed: bool, outdated: bool}
+        raw_level: 1=ANSI table, 2+=plain CSV
     """
     import signal
     import sys
@@ -70,6 +71,21 @@ def run_raw_mode(query, theme_entry, gather_packages, gather_kwargs, filters):
         # No filters
         result_count_text = f"Showing {displayed} of {total}"
     
+    if raw_level >= 2:
+        # CSV mode -- plain text, no ANSI, no borders, machine-readable
+        import csv
+        writer = csv.writer(sys.stdout)
+        writer.writerow(["name", "version", "status", "summary"])
+        for p in pkgs_display:
+            status = " ".join(p.get("status_lines", [])) if isinstance(p.get("status_lines"), list) else str(p.get("status_lines", ""))
+            writer.writerow([
+                p.get("name", ""),
+                p.get("latest", ""),
+                status.strip(),
+                p.get("summary", ""),
+            ])
+        return
+
     # Render table with result count in header
     theme = build_raw_theme(theme_entry["colors"])
     rows = [(p["name"], p["latest"], p["status_lines"], p["summary"]) for p in pkgs_display]

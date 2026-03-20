@@ -139,7 +139,7 @@ def set_cache_logging(enable):
     # One-time migration: Extract versions from metadata_db to version_cache
     _migrate_cache_structure()
 
-CACHE_TTL = 365 * 24 * 60 * 60  # 1 year
+CACHE_TTL = 24 * 60 * 60  # 24 hours -- ETag handles 304 Not Modified so bandwidth cost is minimal
 MAX_RESULTS = 200
 
 
@@ -288,6 +288,14 @@ def fetch_index(force_refresh=False):
     try:
         r = requests.get(INDEX_URL, headers=headers, timeout=20)
         if r.status_code == 304 and cache:
+            # Data unchanged -- warm-restart the TTL so we don't hit the
+            # network again until CACHE_TTL seconds from now
+            try:
+                cache["fetched_at"] = time.time()
+                with INDEX_CACHE_FILE.open("w", encoding="utf-8") as f:
+                    json.dump(cache, f)
+            except Exception:
+                pass
             return cache["data"].get("projects", [])
 
         r.raise_for_status()
@@ -787,13 +795,111 @@ def is_cache_complete():
 # INSTALLED PACKAGES
 # ---------------------------------------------------------------------------
 
+# Paths that indicate distro-managed packages (installed by apt/dnf/pacman etc)
+_DISTRO_PATHS = (
+    '/usr/lib/python3/dist-packages',
+    '/usr/lib/python3',
+    '/usr/share/pyshared',
+)
+# Paths that indicate root-pip-installed packages (not distro)
+_ROOT_PIP_PATHS = (
+    '/usr/local/lib',
+    '/usr/lib/python',   # fallback for non-distro system installs
+)
+# INSTALLER file values that indicate distro management
+_DISTRO_INSTALLERS = ('apt', 'dpkg', 'rpm', 'dnf', 'yum', 'pacman', 'zypper',
+                      'pkg', 'slackpkg', 'slapt-get')
+
+_is_root = (os.getuid() == 0) if hasattr(os, 'getuid') else False
+
+
+def _classify_dist(dist):
+    """Classify a distribution as 'distro', 'root', or 'user'.
+
+    Returns one of:
+        'distro'  -- installed by the system package manager
+        'root'    -- installed by pip/uv as root, not by distro
+        'user'    -- installed in user site or venv
+
+    Detection order:
+    1. INSTALLER file with known distro value (apt, dpkg, rpm etc)
+    2. Missing WHEEL file -- pip always writes WHEEL; distro installs often don't
+    3. Path-based fallback
+    """
+    # 1. Check INSTALLER file -- explicit distro marker
+    try:
+        installer = (dist.read_text('INSTALLER') or '').strip().lower()
+        if installer in _DISTRO_INSTALLERS:
+            return 'distro'
+        is_pip_installed = installer in ('pip', 'uv', 'poetry', 'pdm', 'hatch')
+    except Exception:
+        is_pip_installed = False
+
+    # 2. WHEEL file presence -- pip always writes it; distro installs often skip it
+    #    This is the most reliable cross-distro signal (works on Slackware, Arch etc)
+    if not is_pip_installed:
+        try:
+            wheel = dist.read_text('WHEEL')
+            if wheel is None:
+                # No WHEEL file -- not pip-installed
+                return 'distro'
+        except Exception:
+            return 'distro'
+
+    # 3. Path-based fallback for ambiguous cases
+    # Note: if is_pip_installed is True we skip distro path check --
+    # a known pip installer beats path heuristics (handles Slackware
+    # where pip installs to /usr/lib/python3.12/site-packages)
+    try:
+        base = str(dist.locate_file(''))
+    except Exception:
+        base = ''
+
+    if not is_pip_installed and any(p in base for p in _DISTRO_PATHS):
+        return 'distro'
+    if any(p in base for p in _ROOT_PIP_PATHS):
+        return 'root'
+    if '/usr/' in base and not '.local' in base:
+        return 'root'  # system path but not distro-managed
+    # User home or venv
+    return 'user'
+
+
+def _installed_version(installed_map, canon):
+    """Extract version string from installed_map entry (handles dict format)."""
+    entry = installed_map.get(canon)
+    if entry is None:
+        return None
+    if isinstance(entry, dict):
+        return entry.get('version')
+    return entry  # backward compat
+
+
+def _installed_origin(installed_map, canon):
+    """Extract origin from installed_map entry. Returns 'distro', 'root', or 'user'."""
+    entry = installed_map.get(canon)
+    if entry is None:
+        return None
+    if isinstance(entry, dict):
+        return entry.get('origin', 'user')
+    return 'user'  # backward compat
+
+
 def build_installed_map():
-    """Build map of installed packages."""
+    """Build map of installed packages with installation origin.
+
+    Returns dict of {canonical_name: {'version': str, 'origin': str}}
+    where origin is 'distro', 'root', or 'user'.
+    """
     installed = {}
     for dist in importlib.metadata.distributions():
         name = dist.metadata.get("Name")
         if name:
-            installed[canonicalize_name(name)] = dist.version
+            origin = _classify_dist(dist)
+            installed[canonicalize_name(name)] = {
+                'version': dist.version,
+                'origin': origin,
+            }
     return installed
 
 
@@ -928,7 +1034,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
         
         if cached:
             # Use cached data
-            installed_version = installed_map.get(canon)
+            installed_version = _installed_version(installed_map, canon)
             
             # Get version from version cache (or fallback)
             if canon in version_cache:
@@ -941,18 +1047,25 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
             else:
                 latest = "unknown"
             
-            # Build status
+            # Build status with origin awareness
+            origin = _installed_origin(installed_map, canon) if installed_version else None
+            origin_tag = ""
+            if origin == "distro":
+                origin_tag = " [distro]"
+            elif origin == "root" and not _is_root:
+                origin_tag = " [root]"
+
             if installed_version:
                 cmp = compare_versions(installed_version, latest)
                 if cmp > 0:
-                    status = "Outdated"
-                    status_lines = [f"({installed_version})", "Outdated"]
+                    status = "Outdated" + origin_tag
+                    status_lines = [f"({installed_version})", "Outdated" + origin_tag]
                 elif cmp < 0:
-                    status = "Newer"
-                    status_lines = [f"({installed_version})", "Newer"]
+                    status = "Newer" + origin_tag
+                    status_lines = [f"({installed_version})", "Newer" + origin_tag]
                 else:
-                    status = "Installed"
-                    status_lines = [f"({installed_version})", "Installed"]
+                    status = "Installed" + origin_tag
+                    status_lines = [f"({installed_version})", "Installed" + origin_tag]
             else:
                 status = "Not Installed"
                 status_lines = []
@@ -992,19 +1105,25 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
                 }
                 
                 # Build result
-                installed_version = installed_map.get(canon)
-                
+                installed_version = _installed_version(installed_map, canon)
+                origin = _installed_origin(installed_map, canon) if installed_version else None
+                origin_tag = ""
+                if origin == "distro":
+                    origin_tag = " [distro]"
+                elif origin == "root" and not _is_root:
+                    origin_tag = " [root]"
+
                 if installed_version:
                     cmp = compare_versions(installed_version, latest)
                     if cmp > 0:
-                        status = "Outdated"
-                        status_lines = [f"({installed_version})", "Outdated"]
+                        status = "Outdated" + origin_tag
+                        status_lines = [f"({installed_version})", "Outdated" + origin_tag]
                     elif cmp < 0:
-                        status = "Newer"
-                        status_lines = [f"({installed_version})", "Newer"]
+                        status = "Newer" + origin_tag
+                        status_lines = [f"({installed_version})", "Newer" + origin_tag]
                     else:
-                        status = "Installed"
-                        status_lines = [f"({installed_version})", "Installed"]
+                        status = "Installed" + origin_tag
+                        status_lines = [f"({installed_version})", "Installed" + origin_tag]
                 else:
                     status = "Not Installed"
                     status_lines = []
@@ -1063,7 +1182,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
             canon = canonicalize_name(name)
             
             # Get installed version (just a string)
-            installed_version = installed_map.get(canon)
+            installed_version = _installed_version(installed_map, canon)
             
             # Check if we have metadata cached
             cached = db.get(canon)
@@ -1079,18 +1198,25 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
             else:
                 latest = "unknown"
             
-            # Build status info
+            # Build status info with origin awareness
+            origin = _installed_origin(installed_map, canon) if installed_version else None
+            origin_tag = ""
+            if origin == "distro":
+                origin_tag = " [distro]"
+            elif origin == "root" and not _is_root:
+                origin_tag = " [root]"
+
             if installed_version:
                 cmp = compare_versions(installed_version, latest)
                 if cmp > 0:
-                    status = "Outdated"
-                    status_lines = [f"({installed_version})", "Outdated"]
+                    status = "Outdated" + origin_tag
+                    status_lines = [f"({installed_version})", "Outdated" + origin_tag]
                 elif cmp < 0:
-                    status = "Newer"
-                    status_lines = [f"({installed_version})", "Newer"]
+                    status = "Newer" + origin_tag
+                    status_lines = [f"({installed_version})", "Newer" + origin_tag]
                 else:
-                    status = "Installed"
-                    status_lines = [f"({installed_version})", "Installed"]
+                    status = "Installed" + origin_tag
+                    status_lines = [f"({installed_version})", "Installed" + origin_tag]
             else:
                 status = "Not Installed"
                 status_lines = []
@@ -1170,7 +1296,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
             latest = pkg_data.get("version", "unknown")
         
         summary = pkg_data.get("summary", "")
-        installed = installed_map.get(canon)
+        installed = _installed_version(installed_map, canon)
         
         if installed:
             cmp = compare_versions(installed, latest)
@@ -1259,7 +1385,7 @@ def enhanced_search(query, db, installed_map, explicit=False, override_limit=Fal
         name = pkg["name"]
         latest = pkg.get("version", "unknown")
         summary = pkg.get("summary", "")
-        installed = installed_map.get(canonical)
+        installed = _installed_version(installed_map, canonical)
         
         if installed:
             cmp = compare_versions(installed, latest)

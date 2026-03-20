@@ -2,6 +2,13 @@
 
 All notable changes to pip-search-ex will be documented in this file.
 
+## [2.0.4] - 2026-03-20
+- **ETag cache warm-restart**: 304 Not Modified responses now correctly reset the cache TTL, so the index stays fresh indefinitely with minimal network usage
+- **Root user warning suppressed**: pip install/uninstall no longer shows the root user warning when running as root
+- **Package origin indicators**: Installed packages now show `[distro]` if managed by the system package manager (always shown), and `[root]` if installed by pip as root when running as a non-root user. Detection uses INSTALLER file, WHEEL file presence, and path fallback -- handles Slackware and other non-standard layouts correctly
+- **CSV output mode**: Double `--raw --raw` flag outputs CSV format (name,version,status,summary) for scripting and piping
+- **User theme directory**: Drop custom themes in `~/.cache/pip_search_ex/themes/` -- loaded automatically alongside bundled themes. Invalid or corrupt XML is silently ignored. User themes override bundled themes of the same name
+
 ## [2.0.3] - 2026-02-22
 - **Update to offline cache**: Renamed from enhanced to extended, and split version into its own sub cache
 

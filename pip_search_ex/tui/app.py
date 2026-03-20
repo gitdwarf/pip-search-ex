@@ -862,7 +862,8 @@ class PipSearchApp(App):
             progress = ProgressScreen(f"{action} {package}")
             self.call_from_thread(lambda: self.push_screen(progress))
 
-            cmd = [sys.executable, "-m", "pip", "install"]
+            cmd = [sys.executable, "-m", "pip", "install",
+                   "--root-user-action=ignore"]
             if upgrade:
                 cmd.append("--upgrade")
             if downgrade:
@@ -910,7 +911,8 @@ class PipSearchApp(App):
             progress = ProgressScreen(f"Uninstalling {package}")
             self.call_from_thread(lambda: self.push_screen(progress))
 
-            cmd = [sys.executable, "-m", "pip", "uninstall", "-y", package]
+            cmd = [sys.executable, "-m", "pip", "uninstall", "-y",
+                   "--root-user-action=ignore", package]
 
             try:
                 result = subprocess.run(

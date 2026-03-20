@@ -91,12 +91,23 @@ Use '--raw' for simple table output that mimics the original 'pip_search':
 
 Features in raw mode:
 - Clean, bordered table layout
-- Color-coded installation status
+- Color-coded installation status with origin indicators (`[distro]`, `[root]`)
 - Multi-line text wrapping for long descriptions
 - Works great with grep, awk, and other Unix tools:
 
     pip-search-ex django --raw | grep -i rest
     pip-search-ex --raw flask --no-color > packages.txt
+
+### CSV output mode
+
+Use '--raw --raw' (double flag) for machine-readable CSV output:
+
+    pip-search-ex numpy --raw --raw
+
+Outputs `name,version,status,summary` -- perfect for scripting and automation:
+
+    pip-search-ex requests --raw --raw | awk -F, '{print $1}'
+    pip-search-ex flask --raw --raw | grep "Installed"
 
 ## Themes
 
@@ -127,7 +138,9 @@ Each theme has multiple alias flags for convenience (e.g., '--nord', '--theme-no
 
 ### Creating custom themes
 
-You can easily add your own themes by creating an XML file in the 'themes/' directory:
+Drop your own theme XML files in `~/.cache/pip_search_ex/themes/` -- they are loaded automatically on every run alongside the bundled themes. Invalid or corrupt files are silently ignored. A user theme with the same name as a bundled theme overrides the bundled one.
+
+You can also add themes to the 'themes/' directory inside the package itself:
 
     <theme name="my-theme">
       <aliases>
@@ -186,13 +199,5 @@ Contributions welcome! Please feel free to submit a Pull Request.
 thedwarf
 
 ## License
-
-## Support / Tip Jar
-
-If you find **pip-search-ex** useful, you can support the project with a small tip:
-
-[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-blue?logo=paypal)](https://www.paypal.com/paypalme/gitdwarf)
-
-Every contribution helps keep development going! Thank you 🙏
 
 MIT License - see LICENSE file for details
