@@ -59,7 +59,12 @@ def parse_args():
 
 def main():
     a = parse_args()
-    theme_entry = THEMES[a.theme]
+    theme_name = a.theme
+    if theme_name not in THEMES:
+        import sys
+        print(f"Warning: theme '{theme_name}' not found or invalid -- falling back to 'default'", file=sys.stderr)
+        theme_name = "default"
+    theme_entry = THEMES[theme_name]
     query = a.query.lower()
 
     # Set cache logging preference (core state, set once at startup)

@@ -4,6 +4,12 @@
 
 A complete replacement for the discontinued `pip search` command with unified search architecture, interactive TUI, and 20+ themes.
 
+## What's New in v2.0.6
+
+- **External theming -- two user theme dirs**: Drop your own theme XML files into either `~/.cache/pip_search_ex/themes/` or `~/.config/pip-search-ex/themes/`. Both are scanned automatically; config dir takes priority over cache dir
+- **Invalid themes never crash PSE**: Bad XML, missing colour keys, or corrupt files are skipped at runtime with a warning -- PSE falls back to `default`
+- **`validate_themes.py`**: Replaces the old `testthemes` bash script. Run it to check all theme dirs for missing required colour keys or XML errors before deploying themes
+
 ## What's New in v2.0.5
 
 - **[S] / [D] origin markers**: Installed packages now show `[S]` (system/root pip install) or `[D]` (distro-managed) in the status column. Normal user installs show no marker -- no noise when it's just yours. Context-aware legend line appears at the top of both TUI and raw output, and omits `[S]` automatically when running as root
@@ -145,9 +151,20 @@ Each theme has multiple alias flags for convenience (e.g., '--nord', '--theme-no
 
 ### Creating custom themes
 
-Drop your own theme XML files in `~/.cache/pip_search_ex/themes/` -- they are loaded automatically on every run alongside the bundled themes. Invalid or corrupt files are silently ignored. A user theme with the same name as a bundled theme overrides the bundled one.
+Drop your own theme XML files into either user theme directory -- both are scanned automatically:
 
-You can also add themes to the 'themes/' directory inside the package itself:
+- `~/.config/pip-search-ex/themes/` (preferred, XDG-style)
+- `~/.cache/pip_search_ex/themes/` (also supported)
+
+Config dir takes priority over cache dir. Both override bundled themes of the same name. Invalid or corrupt files are silently skipped -- they will never crash PSE.
+
+To check your themes before use, run:
+
+    python3 validate_themes.py
+
+This scans all three directories (bundled, cache, config) and reports any missing required colour keys or XML errors.
+
+A valid theme XML file looks like this:
 
     <theme name="my-theme">
       <aliases>

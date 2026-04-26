@@ -7,12 +7,12 @@
   </aliases>
 
   <colors>
-    <installed>#008000</installed>      <!-- Dark green for installed -->
-    <outdated>#cc5200</outdated>        <!-- Dark orange for outdated -->
-    <not_installed>#666666</not_installed>  <!-- Medium gray for not installed -->
-    <e>#cc0000</e>              <!-- Red for errors -->
-    <header>#0066cc</header>            <!-- Dark blue for headers -->
-    <border>#888888</border>            <!-- Medium gray for borders -->
-    <default>#000000</default>          <!-- Black for default text -->
+    <installed>#008000</installed>
+    <outdated>#cc5200</outdated>
+    <not_installed>#666666</not_installed>
+    <error>#cc0000</error>
+    <header>#0066cc</header>
+    <border>#888888</border>
+    <default>#000000</default>
   </colors>
 </theme>

@@ -33,7 +33,7 @@ def build_raw_theme(colors: dict):
         "installed": convert(colors.get("installed")),
         "outdated": convert(colors.get("outdated")),
         "not_installed": convert(colors.get("not_installed")),
-        "error": convert(colors.get("error")),
+        "error": convert(colors.get("error") or colors.get("e")),
         "header": convert(colors.get("header")),
         "border": convert(colors.get("border")),
         "default": RESET,

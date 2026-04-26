@@ -2,6 +2,23 @@
 
 All notable changes to pip-search-ex will be documented in this file.
 
+## [2.0.6] - 2026-04-26
+
+### External Theming
+
+- User themes now supported in two locations -- either works:
+  - `~/.cache/pip_search_ex/themes/` (legacy, cache-adjacent)
+  - `~/.config/pip-search-ex/themes/` (XDG-style, preferred)
+- Priority order: bundled themes < cache dir themes < config dir themes. Same-name user theme always wins
+- Invalid themes now skipped gracefully at runtime -- PSE falls back to `default` with a warning instead of crashing
+- Theme validation is now strict: all 7 required colour keys must be present (`installed`, `outdated`, `not_installed`, `error`, `header`, `border`, `default`)
+- `<e>` accepted as alias for `<error>` in theme XML for backwards compatibility
+- `validate_themes.py` replaces the old `testthemes` bash script -- scans all three theme dirs, reports missing keys and XML errors per file, exits non-zero if anything is broken
+
+### Bug Fixes
+- `light-terminal` theme was missing the `error` colour key -- caught by the new validator, now fixed
+- `colors.py` was silently ignoring `<e>` tags in theme XML -- now aliased to `error` correctly
+
 ## [2.0.5] - 2026-04-26
 
 ### Installation Origin Markers
