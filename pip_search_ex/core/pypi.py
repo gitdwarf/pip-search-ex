@@ -149,7 +149,8 @@ MAX_RESULTS = 200
 
 def check_self_update():
     """Check if pip-search-ex itself is outdated.
-    
+
+    Only checks once per 24 hours to avoid hitting PyPI on every run.
     Shows notification but doesn't prompt if:
     - Installed as root but running as user
     - No response after 5 seconds
@@ -158,11 +159,44 @@ def check_self_update():
         installed_version = importlib.metadata.version("pip-search-ex")
     except importlib.metadata.PackageNotFoundError:
         return False
-    
+
+    # TTL check -- only hit PyPI once per 24h
+    UPDATE_CHECK_FILE = CACHE_DIR / "last_update_check.json"
+    UPDATE_CHECK_TTL = 24 * 60 * 60  # 24 hours
     try:
-        r = requests.get(META_URL.format(name="pip-search-ex"), timeout=5)
-        r.raise_for_status()
-        latest_version = r.json().get("info", {}).get("version")
+        if UPDATE_CHECK_FILE.exists():
+            data = json.loads(UPDATE_CHECK_FILE.read_text())
+            if time.time() - data.get("checked_at", 0) < UPDATE_CHECK_TTL:
+                # Within TTL -- use cached result, no network call
+                latest_version = data.get("latest_version")
+                if not latest_version or latest_version == installed_version:
+                    return False
+                # Fall through to notify if cached result says outdated
+                # (skip the network fetch below)
+                r = None
+            else:
+                r = "fetch"
+        else:
+            r = "fetch"
+    except Exception:
+        r = "fetch"
+
+    if r == "fetch":
+        try:
+            resp = requests.get(META_URL.format(name="pip-search-ex"), timeout=5)
+            resp.raise_for_status()
+            latest_version = resp.json().get("info", {}).get("version")
+            # Cache the result
+            try:
+                CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                UPDATE_CHECK_FILE.write_text(json.dumps({
+                    "checked_at": time.time(),
+                    "latest_version": latest_version,
+                }))
+            except Exception:
+                pass
+        except Exception:
+            return False
         
         if not latest_version or latest_version == installed_version:
             return False
@@ -223,9 +257,6 @@ def check_self_update():
                 print(f"✗ Update failed: {result.stderr}\n")
         
         print()
-        return False
-        
-    except Exception:
         return False
 
 
@@ -413,29 +444,26 @@ def start_background_cache_build(force_refresh=False):
     start_cache_worker()
 
 def load_metadata_db_with_index():
-    """Load metadata DB along with the package index snapshot.
-    
-    Auto-recovers from corrupted cache by deleting and starting fresh.
+    """Load metadata DB. Returns (packages_dict, []).
+
+    index_snapshot is no longer stored in metadata_db.json -- use
+    simple_index.json (fetch_index) for completeness calculations.
+    The empty list return is kept for call-site compatibility.
     """
     if not METADATA_DB_FILE.exists():
         return {}, []
-    
+
     try:
         with METADATA_DB_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
             packages = data.get("packages", {})
-            index_snapshot = data.get("index_snapshot", [])
-            
-            # Validate data structure
+
             if not isinstance(packages, dict):
                 raise ValueError("Corrupted cache: packages not a dict")
-            if not isinstance(index_snapshot, list):
-                raise ValueError("Corrupted cache: index_snapshot not a list")
-            
-            return packages, index_snapshot
-    except Exception as e:
-        # Cache is corrupted - delete it and start fresh
-        print(f"Warning: Corrupted cache detected, rebuilding...")
+
+            return packages, []
+    except Exception:
+        print("Warning: Corrupted cache detected, rebuilding...")
         try:
             METADATA_DB_FILE.unlink()
         except Exception:
@@ -635,43 +663,40 @@ def _background_sync_worker(force_refresh=False):
             pass
 
 
-def _save_incremental_progress(packages_dict, index_snapshot):
-    """Save metadata DB with index snapshot for next incremental sync.
-    
-    Uses atomic write (temp file + rename) to prevent corruption if killed mid-write.
+def _save_incremental_progress(packages_dict, index_snapshot=None):
+    """Save metadata DB (packages only -- no index_snapshot embedded).
+
+    index_snapshot argument kept for call-site compatibility but is ignored.
+    simple_index.json already holds the index; duplicating it here was causing
+    metadata_db.json to balloon to 40MB+.
     """
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        
-        # Write to temporary file first
+
         import tempfile
         temp_fd, temp_path = tempfile.mkstemp(dir=CACHE_DIR, prefix='.metadata_tmp_', suffix='.json')
-        
+
         try:
             with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
                 json.dump({
                     "timestamp": time.time(),
                     "packages": packages_dict,
-                    "index_snapshot": index_snapshot,
                 }, f)
-                # Explicitly flush to disk
                 f.flush()
                 os.fsync(f.fileno())
-            
-            # Atomic rename (POSIX guarantees atomicity)
+
             import shutil
             shutil.move(temp_path, str(METADATA_DB_FILE))
-            
+
         except Exception:
-            # Clean up temp file on error
             try:
                 os.unlink(temp_path)
             except Exception:
                 pass
             raise
-            
+
     except Exception:
-        pass  # Don't fail if we can't save
+        pass
 
 
 # Alias for convenience
@@ -757,14 +782,9 @@ def is_cache_complete():
             
             # Calculate completeness percentage
             try:
-                index_snapshot = data.get("index_snapshot", [])
-                pypi_size = len(index_snapshot) if index_snapshot else 0
-                
-                if pypi_size == 0:
-                    # Fetch current index size
-                    projects = fetch_index(force_refresh=False)
-                    pypi_size = len(projects)
-                
+                projects = fetch_index(force_refresh=False)
+                pypi_size = len(projects) if projects else 0
+
                 if pypi_size > 0:
                     completeness = int((cache_size / pypi_size) * 100)
                 else:
@@ -1051,20 +1071,21 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
             origin = _installed_origin(installed_map, canon) if installed_version else None
             origin_tag = ""
             if origin == "distro":
-                origin_tag = " [distro]"
+                origin_tag = " [D]"
             elif origin == "root" and not _is_root:
-                origin_tag = " [root]"
+                origin_tag = " [S]"
+
 
             if installed_version:
                 cmp = compare_versions(installed_version, latest)
                 if cmp > 0:
-                    status = "Outdated" + origin_tag
+                    status = "Outdated"
                     status_lines = [f"({installed_version})", "Outdated" + origin_tag]
                 elif cmp < 0:
-                    status = "Newer" + origin_tag
+                    status = "Newer"
                     status_lines = [f"({installed_version})", "Newer" + origin_tag]
                 else:
-                    status = "Installed" + origin_tag
+                    status = "Installed"
                     status_lines = [f"({installed_version})", "Installed" + origin_tag]
             else:
                 status = "Not Installed"
@@ -1075,74 +1096,39 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
                 "latest": latest,
                 "installed": installed_version,
                 "status": status,
+                "origin": origin,
                 "status_lines": status_lines,
                 "summary": cached.get("summary", ""),
             })
         else:
-            # Need to fetch
-            to_fetch.append(name)
-    
-    # Fetch missing packages if any
-    if to_fetch:
-        with ThreadPoolExecutor(max_workers=12) as executor:
-            futures = {executor.submit(fetch_single_metadata, name): name for name in to_fetch}
-            
-            for future in as_completed(futures):
-                pkg = future.result()
-                if not pkg:
-                    continue
-                
-                name = pkg["name"]
-                canon = canonicalize_name(name)
-                latest = pkg.get("version", "unknown")
-                summary = pkg.get("summary", "")
-                
-                # Cache it
-                db[canon] = {
-                    "name": name,
-                    "version": latest,
-                    "summary": summary,
-                }
-                
-                # Build result
-                installed_version = _installed_version(installed_map, canon)
-                origin = _installed_origin(installed_map, canon) if installed_version else None
-                origin_tag = ""
-                if origin == "distro":
-                    origin_tag = " [distro]"
-                elif origin == "root" and not _is_root:
-                    origin_tag = " [root]"
+            # Not in local cache -- return name-only result, no live fetch.
+            # Background worker will cache it eventually; next search will have metadata.
+            installed_version = _installed_version(installed_map, canon)
+            origin = _installed_origin(installed_map, canon) if installed_version else None
+            origin_tag = ""
+            if origin == "distro":
+                origin_tag = " [D]"
+            elif origin == "root" and not _is_root:
+                origin_tag = " [S]"
 
-                if installed_version:
-                    cmp = compare_versions(installed_version, latest)
-                    if cmp > 0:
-                        status = "Outdated" + origin_tag
-                        status_lines = [f"({installed_version})", "Outdated" + origin_tag]
-                    elif cmp < 0:
-                        status = "Newer" + origin_tag
-                        status_lines = [f"({installed_version})", "Newer" + origin_tag]
-                    else:
-                        status = "Installed" + origin_tag
-                        status_lines = [f"({installed_version})", "Installed" + origin_tag]
-                else:
-                    status = "Not Installed"
-                    status_lines = []
-                
-                results.append({
-                    "name": name,
-                    "latest": latest,
-                    "installed": installed_version,
-                    "status": status,
-                    "status_lines": status_lines,
-                    "summary": summary,
-                })
-        
-        # Save updated cache
-        try:
-            _save_metadata_db(db, projects)
-        except Exception:
-            pass
-    
+            if installed_version:
+                cmp = compare_versions(installed_version, "unknown")
+                status = "Installed"
+                status_lines = [f"({installed_version})", "Installed" + origin_tag]
+            else:
+                status = "Not Installed"
+                status_lines = []
+
+            results.append({
+                "name": name,
+                "latest": "?",
+                "installed": installed_version,
+                "status": status,
+                "origin": origin,
+                "status_lines": status_lines,
+                "summary": "",
+            })
+
     results.sort(key=lambda r: r["name"].lower())
     return results
     """Quick name-only search with incremental caching.
@@ -1202,20 +1188,21 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
             origin = _installed_origin(installed_map, canon) if installed_version else None
             origin_tag = ""
             if origin == "distro":
-                origin_tag = " [distro]"
+                origin_tag = " [D]"
             elif origin == "root" and not _is_root:
-                origin_tag = " [root]"
+                origin_tag = " [S]"
+
 
             if installed_version:
                 cmp = compare_versions(installed_version, latest)
                 if cmp > 0:
-                    status = "Outdated" + origin_tag
+                    status = "Outdated"
                     status_lines = [f"({installed_version})", "Outdated" + origin_tag]
                 elif cmp < 0:
-                    status = "Newer" + origin_tag
+                    status = "Newer"
                     status_lines = [f"({installed_version})", "Newer" + origin_tag]
                 else:
-                    status = "Installed" + origin_tag
+                    status = "Installed"
                     status_lines = [f"({installed_version})", "Installed" + origin_tag]
             else:
                 status = "Not Installed"
@@ -1226,6 +1213,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
                 "latest": latest,
                 "installed": installed_version,
                 "status": status,
+                "origin": origin,
                 "status_lines": status_lines,
                 "summary": cached.get("summary", "") if cached else "",
             })
@@ -1299,17 +1287,20 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
         installed = _installed_version(installed_map, canon)
         
         if installed:
+            origin = _installed_origin(installed_map, canonicalize_name(name))
+            origin_tag = " [D]" if origin == "distro" else (" [S]" if (origin == "root" and not _is_root) else "")
             cmp = compare_versions(installed, latest)
             if cmp > 0:
                 status = "Outdated"
-                status_lines = [f"({installed})", "Outdated"]
+                status_lines = [f"({installed})", "Outdated" + origin_tag]
             elif cmp < 0:
                 status = "Newer"
-                status_lines = [f"({installed})", "Newer"]
+                status_lines = [f"({installed})", "Newer" + origin_tag]
             else:
                 status = "Installed"
-                status_lines = [f"({installed})", "Installed"]
+                status_lines = [f"({installed})", "Installed" + origin_tag]
         else:
+            origin = None
             status = "Not Installed"
             status_lines = ["Not Installed"]
         
@@ -1318,6 +1309,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
             "latest": latest,
             "installed": installed,
             "status": status,
+            "origin": origin,
             "status_lines": status_lines,
             "summary": summary,
         })
@@ -1388,17 +1380,20 @@ def enhanced_search(query, db, installed_map, explicit=False, override_limit=Fal
         installed = _installed_version(installed_map, canonical)
         
         if installed:
+            origin = _installed_origin(installed_map, canonicalize_name(name))
+            origin_tag = " [D]" if origin == "distro" else (" [S]" if (origin == "root" and not _is_root) else "")
             cmp = compare_versions(installed, latest)
             if cmp > 0:
                 status = "Outdated"
-                status_lines = [f"({installed})", "Outdated"]
+                status_lines = [f"({installed})", "Outdated" + origin_tag]
             elif cmp < 0:
                 status = "Newer"
-                status_lines = [f"({installed})", "Newer"]
+                status_lines = [f"({installed})", "Newer" + origin_tag]
             else:
                 status = "Installed"
-                status_lines = [f"({installed})", "Installed"]
+                status_lines = [f"({installed})", "Installed" + origin_tag]
         else:
+            origin = None
             status = "Not Installed"
             status_lines = ["Not Installed"]
         
@@ -1407,6 +1402,7 @@ def enhanced_search(query, db, installed_map, explicit=False, override_limit=Fal
             "latest": latest,
             "installed": installed,
             "status": status,
+            "origin": origin,
             "status_lines": status_lines,
             "summary": summary,
         })
@@ -1438,7 +1434,19 @@ def gather_packages(
     def progress(msg):
         if progress_callback:
             progress_callback(msg)
-    
+
+    # When query is a list of specific package names (e.g. --installed mode),
+    # skip fetch_index entirely -- the full 500K index is irrelevant.
+    if isinstance(query, list):
+        progress("Checking installed packages")
+        installed_map = build_installed_map()
+        _, cache_percent = is_cache_complete()
+        progress("Searching")
+        results = unified_search(query, [], installed_map, explicit, override_limit)
+        searched_names = [r["name"] for r in results]
+        start_cache_worker(searched_names)
+        return results, False, cache_percent
+
     progress("Loading package index")
     projects = fetch_index(force_refresh)
     

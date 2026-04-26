@@ -1,14 +1,21 @@
 # pip-search-ex
 
-**Modern PyPI Package Search - Fast, Smart, Beautiful**
+**Modern PyPI Package Search - Fast, Smart, Beautiful**. Part of the [DwarvenSuite](https://github.com/gitdwarf).
 
 A complete replacement for the discontinued `pip search` command with unified search architecture, interactive TUI, and 20+ themes.
 
-## ✨ What's New in v2.0.0
+## What's New in v2.0.5
 
-- **🔍 Unified Search**: Intelligent search that works immediately - searches ALL PyPI packages by name, with opportunistic metadata enrichment
-- **📊 Cache Status**: New `--status` flag shows cache completion percentage  
-- **🎨 Light Terminal Theme**: Perfect for white/light backgrounds with `--inverse` / `--light-terminal`
+- **[S] / [D] origin markers**: Installed packages now show `[S]` (system/root pip install) or `[D]` (distro-managed) in the status column. Normal user installs show no marker -- no noise when it's just yours. Context-aware legend line appears at the top of both TUI and raw output, and omits `[S]` automatically when running as root
+- **No more PyPI hammering**: All live fetches removed from the foreground search path. Cache misses return name-only results instantly; the background worker fills metadata in over time at 2 req/sec. PSE is now friendlier to PyPI than searching on PyPI directly
+- **`--installed` is now fast**: No longer loads the full 500K package index when you only want to see what's installed
+- **Lean cache**: `metadata_db.json` no longer embeds a redundant copy of the package index -- it now grows proportionally to cached metadata only
+
+## What's New in v2.0.0
+
+- **Unified Search**: Intelligent search that works immediately -- searches ALL PyPI packages by name, with opportunistic metadata enrichment as the cache builds
+- **Cache Status**: New `--status` flag shows cache completion percentage
+- **Light Terminal Theme**: Perfect for white/light backgrounds with `--inverse` / `--light-terminal`
 
 ## Features
 
@@ -91,7 +98,7 @@ Use '--raw' for simple table output that mimics the original 'pip_search':
 
 Features in raw mode:
 - Clean, bordered table layout
-- Color-coded installation status with origin indicators (`[distro]`, `[root]`)
+- Color-coded installation status with origin markers (`[S]` = system/root pip install, `[D]` = distro-managed)
 - Multi-line text wrapping for long descriptions
 - Works great with grep, awk, and other Unix tools:
 

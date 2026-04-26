@@ -2,6 +2,29 @@
 
 All notable changes to pip-search-ex will be documented in this file.
 
+## [2.0.5] - 2026-04-26
+
+### Installation Origin Markers
+- Installed packages now display `[S]` (system/root pip install) or `[D]` (distro-managed) in the status column
+- Plain `Installed` / `Outdated` / `Newer` shown for normal user pip installs -- no noise when it's just yours
+- Context-aware legend line in both TUI (top bar) and raw mode (above table):
+  - Running as root: only `[D]` shown in legend (root never sees `[S]`)
+  - Running as user: both `[S]` and `[D]` explained
+- Distro-agnostic wording: "check your package manager" -- no assumptions about apt/dnf/etc
+
+### Bug Fixes
+- Fixed colours being lost for system-installed packages in TUI and raw mode -- `status` field was having origin tag concatenated onto it (e.g. `"Installed [distro]"`), breaking all equality checks. `status` is now always a bare word; `origin` is a separate field on the result dict
+- Fixed `[S]` and `[D]` being silently eaten by Textual's markup parser -- escaped as `\[S]` and `\[D]`
+- Fixed raw table search line being 1 character too wide -- switched from `len()` to `wcswidth()` for accurate emoji column width
+- Fixed raw table bottom border showing column dividers (`┴`) under the legend line -- legend now has its own solid `└──┘` border
+
+### Performance
+- `--installed` mode no longer loads the full 500K package index -- skipped entirely when query is a list of specific packages
+- Eliminated all live PyPI fetches during foreground search -- cache misses return name-only results instantly; background worker fills metadata over time at 2 req/sec
+- `metadata_db.json` no longer embeds a full copy of the package index. Was causing the file to balloon to 41MB regardless of how many packages were actually cached; now grows proportionally to cached metadata only
+- `flush_cache_chunk` no longer calls `fetch_index()` on every cache write -- removed a redundant 700ms index parse per chunk flush
+- `check_self_update` now TTL-cached for 24 hours -- was hitting PyPI on every single run
+
 ## [2.0.4] - 2026-03-20
 - **ETag cache warm-restart**: 304 Not Modified responses now correctly reset the cache TTL, so the index stays fresh indefinitely with minimal network usage
 - **Root user warning suppressed**: pip install/uninstall no longer shows the root user warning when running as root

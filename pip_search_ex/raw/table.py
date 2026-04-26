@@ -133,20 +133,28 @@ def print_table(rows, theme, basic_mode=False, cache_percent=0, result_count_tex
     
     # Helper to print left-aligned banner content
     def print_banner_left(text, color=info, print_separator=True, width_adjust=0):
-        # Use simple len() plus an adjustment factor for emoji quirks
-        text_len = len(text)
-        
-        # Calculate how much padding needed (with adjustment)
-        padding_needed = banner_target_width - text_len + width_adjust
-        
-        # Build line with proper padding
+        # Use wcswidth for accurate display width (handles emoji correctly)
+        text_display_width = wcswidth(text)
+        if text_display_width < 0:
+            text_display_width = len(text)  # fallback for non-printable chars
+
+        padding_needed = banner_target_width - text_display_width + width_adjust
         if padding_needed > 0:
             line = text + " " * padding_needed
         else:
-            # Text too long - truncate
-            line = text[:banner_target_width]
-        
-        # Add color codes ONLY in the print statement, not in the padded line
+            # Text too long - truncate by display width
+            out = ""
+            wsum = 0
+            for ch in text:
+                w = wcwidth(ch)
+                if w < 0:
+                    w = 0
+                if wsum + w > banner_target_width:
+                    break
+                out += ch
+                wsum += w
+            line = out + " " * max(0, banner_target_width - wsum)
+
         print(f"{border}│{color}{line}{default}{border}│{default}")
         if print_separator:
             print(hline_solid("├", "┤"))
@@ -170,13 +178,12 @@ def print_table(rows, theme, basic_mode=False, cache_percent=0, result_count_tex
     
     # Determine if status banner will be shown (show if --status flag, regardless of cache %)
     will_show_status_banner = filters and filters.get('status', False)
-    
-    # Combined search + result count banner (🔍 displays wide, need -1)
+
+    # Combined search + result count banner
     search_text = filters.get('query') if (filters and filters.get('query')) else "<ALL>"
     combined = f"🔍 Search: {search_text}     {result_count_text if result_count_text else ''}"
-    # Don't print separator if this is the last banner (no filter or status after)
     has_more_banners = (filters and (filters.get('installed') or filters.get('outdated') or filters.get('full'))) or will_show_status_banner
-    print_banner_left(combined, width_adjust=-1, print_separator=has_more_banners)
+    print_banner_left(combined, print_separator=has_more_banners)
     
     # Filter banners on second line (if any active) (📦🔓 display wide, need -1)
     filter_tags = []
@@ -192,15 +199,26 @@ def print_table(rows, theme, basic_mode=False, cache_percent=0, result_count_tex
     if filter_tags:
         filter_line = "  ".join(filter_tags)
         # Don't print separator if this is the last banner (no status banner after)
-        print_banner_left(filter_line, warning, width_adjust=-1, print_separator=will_show_status_banner)
+        print_banner_left(filter_line, warning, print_separator=will_show_status_banner)
     
-    # Show status banner (if --status flag active) (📊 displays wide like 🔍, need -1)
+    # Show status banner (if --status flag active)
     if will_show_status_banner:
         if cache_percent >= 100:
-            print_banner_left("✅ Extended cache complete", info, print_separator=False, width_adjust=-1)
+            print_banner_left("✅ Extended cache complete", info, print_separator=False)
         else:
-            print_banner_left(f"📊 Local extended cache: {cache_percent}% complete", info, print_separator=False, width_adjust=-1)
-    
+            print_banner_left(f"📊 Local extended cache: {cache_percent}% complete", info, print_separator=False)
+
+    # Legend -- always last in the banner section, just above the table
+    import os
+    _is_root = (os.getuid() == 0) if hasattr(os, 'getuid') else False
+    dim = "\033[2m"
+    if _is_root:
+        legend_text = "  [D] = distro-managed (check your package manager)"
+    else:
+        legend_text = "  [S] = system/root pip install  |  [D] = distro-managed (check your package manager)"
+    print(hline_solid("├", "┤"))
+    print_banner_left(legend_text, color=dim, print_separator=False)
+
     # Transition line from banners to table (with column dividers ┬)
     print(hline("├", "┬", "┤"))
 

@@ -1,0 +1,11 @@
+for f in themes/*.xml; do
+    echo "Checking $f"
+    python3 - <<EOF
+import xml.etree.ElementTree as ET
+try:
+    ET.parse("$f")
+    print("  OK")
+except Exception as e:
+    print("  ERROR:", e)
+EOF
+done

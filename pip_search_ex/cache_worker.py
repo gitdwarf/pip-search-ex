@@ -51,42 +51,27 @@ CHUNK_SIZE = 200  # Process 200 packages at a time
 
 def flush_cache_chunk(cache_var):
     """Append cache_var to existing cache file atomically.
-    
+
     Args:
         cache_var: Dict of {canonical_name: metadata} to add to cache
                    metadata has {name, version, summary}
-    
-    Splits into version_cache.json and metadata_db.json.
     """
     try:
-        # Load existing caches
-        db, index_snapshot = load_metadata_db_with_index()
+        db, _ = load_metadata_db_with_index()
         version_cache = load_version_cache()
-        
-        # Split new chunk into versions and metadata
+
         for canon, pkg_data in cache_var.items():
-            # Extract version to version cache
-            version = pkg_data.get("version", "unknown")
-            version_cache[canon] = version
-            
-            # Extract metadata (name + summary only) to metadata cache
+            version_cache[canon] = pkg_data.get("version", "unknown")
             db[canon] = {
                 "name": pkg_data.get("name", canon),
                 "summary": pkg_data.get("summary", ""),
             }
-        
-        # Get current index for snapshot
-        try:
-            current_index = fetch_index(force_refresh=False)
-        except Exception:
-            current_index = index_snapshot
-        
-        # Atomic writes for both caches
-        _save_incremental_progress(db, current_index)
+
+        _save_incremental_progress(db)
         save_version_cache(version_cache)
-        
+
         logging.debug(f"Successfully flushed {len(cache_var)} packages to cache")
-        
+
     except Exception as e:
         logging.error(f"Failed to flush cache chunk: {e}")
 

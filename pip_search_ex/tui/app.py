@@ -399,6 +399,12 @@ class PipSearchApp(App):
         width: auto;
         display: none;
     }
+
+    .banner-legend {
+        color: #888888;
+        width: 1fr;
+        height: auto;
+    }
     """
 
     # Disable the palette button
@@ -478,6 +484,7 @@ class PipSearchApp(App):
             yield Static("", id="banner-outdated", classes="banner-outdated")
             yield Static("", id="banner-nolimit", classes="banner-nolimit")
             yield Static("", id="banner-basic", classes="banner-basic")
+        yield Static("", id="banner-legend", classes="banner-legend")
         self.table = DataTable()
         yield self.table
         yield Footer()
@@ -548,6 +555,15 @@ class PipSearchApp(App):
         else:
             # No --status flag, hide banner
             basic_widget.display = False
+
+        # Legend: context-aware explanation of status markers
+        import os
+        _is_root = (os.getuid() == 0) if hasattr(os, 'getuid') else False
+        legend_widget = self.query_one("#banner-legend", Static)
+        if _is_root:
+            legend_widget.update("  \\[D] = distro-managed (check your package manager)")
+        else:
+            legend_widget.update("  \\[S] = system/root pip install  |  \\[D] = distro-managed (check your package manager)")
 
     def _apply_filters_async(self):
         """Re-fetch data in background (for explicit mode changes).
@@ -996,6 +1012,9 @@ class PipSearchApp(App):
 
         theme_colors = self.theme_entry["colors"]
 
+        import os
+        _is_root = (os.getuid() == 0) if hasattr(os, 'getuid') else False
+
         for p in self.pkgs:
             status = p["status"]
             if status in ("Installed", "Newer"):
@@ -1007,11 +1026,19 @@ class PipSearchApp(App):
             else:
                 color = theme_colors.get("not_installed", "#808080")
 
+            origin = p.get("origin")
+            if origin == "distro":
+                status_display = f"{status} \\[D]"
+            elif origin == "root" and not _is_root:
+                status_display = f"{status} \\[S]"
+            else:
+                status_display = status
+
             self.table.add_row(
                 f"[{color}]{p['name']}[/]",
                 f"[{color}]{p['latest']}[/]",
                 f"[{color}]{p['installed'] or ''}[/]",
-                f"[{color}]{p['status']}[/]",
+                f"[{color}]{status_display}[/]",
                 f"[{color}]{p['summary']}[/]"
             )
 
