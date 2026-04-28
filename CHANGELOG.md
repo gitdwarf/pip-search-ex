@@ -2,6 +2,24 @@
 
 All notable changes to pip-search-ex will be documented in this file.
 
+## [2.0.7] - 2026-04-26
+
+### Cache Behaviour
+
+- Metadata cache now uses LRU-style TTL per entry -- works like a browser cache:
+  - Cache hit: serve from disk, reset the 360-day access clock
+  - Cache miss: fetch live from PyPI, store with timestamps
+  - Stale (not accessed in 360 days): evict, treat as miss, fetch fresh
+  - Actively used packages never go stale regardless of age
+- Each metadata entry now stores `fetched` (when last pulled from PyPI) and `accessed` (last time a search touched it) timestamps
+- All cache read/write sites consolidated into `_meta_entry_get` / `_meta_entry_set` -- single place to change cache behaviour
+
+### Bug Fixes
+
+- Live PyPI fetches now correctly restored for cache misses -- v2.0.6 was too aggressive in killing fetches, causing empty results on fresh installs or sparse caches
+- Cache misses are now fetched for all displayed results (up to `MAX_RESULTS` / `--full`), rate-limited at ~6-7 req/sec to be polite to PyPI
+- `all_matches` trimmed to display limit before any fetch work begins -- no fetching beyond what the user will actually see
+
 ## [2.0.6] - 2026-04-26
 
 ### External Theming

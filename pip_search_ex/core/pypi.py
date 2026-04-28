@@ -139,8 +139,41 @@ def set_cache_logging(enable):
     # One-time migration: Extract versions from metadata_db to version_cache
     _migrate_cache_structure()
 
-CACHE_TTL = 24 * 60 * 60  # 24 hours -- ETag handles 304 Not Modified so bandwidth cost is minimal
+CACHE_TTL = 24 * 60 * 60              # 24h -- index ETag refresh
+META_ENTRY_TTL = 360 * 24 * 60 * 60  # 360 days -- per-entry LRU TTL
 MAX_RESULTS = 200
+
+
+def _meta_entry_get(db, canon):
+    """Read a metadata entry from db, updating its accessed timestamp.
+
+    Returns the entry dict if present and not stale, None if absent or stale.
+    Stale = not accessed in META_ENTRY_TTL seconds.
+    """
+    entry = db.get(canon)
+    if entry is None:
+        return None
+    now = time.time()
+    accessed = entry.get("accessed", entry.get("fetched", 0))
+    if now - accessed > META_ENTRY_TTL:
+        # Stale -- evict and treat as cache miss
+        del db[canon]
+        return None
+    # Hit -- reset the access clock
+    entry["accessed"] = now
+    return entry
+
+
+def _meta_entry_set(db, canon, name, version, summary):
+    """Write a metadata entry to db with current fetched and accessed timestamps."""
+    now = time.time()
+    db[canon] = {
+        "name": name,
+        "version": version,
+        "summary": summary,
+        "fetched": now,
+        "accessed": now,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +671,7 @@ def _background_sync_worker(force_refresh=False):
                 pkg = future.result()
                 if pkg:
                     canonical = canonicalize_name(pkg["name"])
-                    db[canonical] = pkg
+                    _meta_entry_set(db, canonical, pkg.get("name", canonical), pkg.get("version", "unknown"), pkg.get("summary", ""))
                 
                 completed += 1
                 
@@ -1043,14 +1076,19 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
     
     # Combine matches: name matches first, then metadata matches
     all_matches = list(name_matches) + list(metadata_matches)
-    
+
+    # Trim to display limit before doing any work -- no point fetching beyond what's shown
+    display_limit = None if override_limit else MAX_RESULTS
+    if display_limit is not None:
+        all_matches = all_matches[:display_limit]
+
     # Build results from cache + fetch missing
     results = []
     to_fetch = []
-    
+
     for name in all_matches:
         canon = canonicalize_name(name)
-        cached = db.get(canon)
+        cached = _meta_entry_get(db, canon)
         
         if cached:
             # Use cached data
@@ -1101,33 +1139,68 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
                 "summary": cached.get("summary", ""),
             })
         else:
-            # Not in local cache -- return name-only result, no live fetch.
-            # Background worker will cache it eventually; next search will have metadata.
-            installed_version = _installed_version(installed_map, canon)
-            origin = _installed_origin(installed_map, canon) if installed_version else None
-            origin_tag = ""
-            if origin == "distro":
-                origin_tag = " [D]"
-            elif origin == "root" and not _is_root:
-                origin_tag = " [S]"
+            # Not in local cache -- queue for live fetch if result set is small enough.
+            # For broad searches (hundreds of matches) we never live-fetch -- name-only is fine.
+            # For narrow/specific searches (few matches) we do fetch so the user gets real data.
+            to_fetch.append(name)
 
-            if installed_version:
-                cmp = compare_versions(installed_version, "unknown")
-                status = "Installed"
-                status_lines = [f"({installed_version})", "Installed" + origin_tag]
-            else:
-                status = "Not Installed"
-                status_lines = []
+    # Live-fetch cache misses -- already capped to display_limit entries above.
+    # Rate-limited: small sleep between requests to be polite to PyPI.
+    FETCH_RATE_DELAY = 0.15  # seconds between requests (~6-7/sec max)
+    if to_fetch:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {}
+            for i, name in enumerate(to_fetch):
+                if i > 0:
+                    time.sleep(FETCH_RATE_DELAY)
+                futures[executor.submit(fetch_single_metadata, name)] = name
 
-            results.append({
-                "name": name,
-                "latest": "?",
-                "installed": installed_version,
-                "status": status,
-                "origin": origin,
-                "status_lines": status_lines,
-                "summary": "",
-            })
+            for future in as_completed(futures):
+                pkg = future.result()
+                if not pkg:
+                    continue
+
+                name = pkg["name"]
+                canon = canonicalize_name(name)
+                latest = pkg.get("version", "unknown")
+                summary = pkg.get("summary", "")
+
+                _meta_entry_set(db, canon, name, latest, summary)
+
+                installed_version = _installed_version(installed_map, canon)
+                origin = _installed_origin(installed_map, canon) if installed_version else None
+                origin_tag = ""
+                if origin == "distro":
+                    origin_tag = " [D]"
+                elif origin == "root" and not _is_root:
+                    origin_tag = " [S]"
+
+                if installed_version:
+                    cmp = compare_versions(installed_version, latest)
+                    if cmp > 0:
+                        status, status_lines = "Outdated", [f"({installed_version})", "Outdated" + origin_tag]
+                    elif cmp < 0:
+                        status, status_lines = "Newer", [f"({installed_version})", "Newer" + origin_tag]
+                    else:
+                        status, status_lines = "Installed", [f"({installed_version})", "Installed" + origin_tag]
+                else:
+                    status, status_lines = "Not Installed", []
+
+                results.append({
+                    "name": name,
+                    "latest": latest,
+                    "installed": installed_version,
+                    "status": status,
+                    "origin": origin,
+                    "status_lines": status_lines,
+                    "summary": summary,
+                })
+
+        # Persist newly fetched metadata
+        try:
+            _save_incremental_progress(db)
+        except Exception:
+            pass
 
     results.sort(key=lambda r: r["name"].lower())
     return results
@@ -1171,7 +1244,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
             installed_version = _installed_version(installed_map, canon)
             
             # Check if we have metadata cached
-            cached = db.get(canon)
+            cached = _meta_entry_get(db, canon)
             
             # Determine latest version - check version cache first, then metadata fallback
             if canon in version_cache:
@@ -1252,10 +1325,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
                 fetched_versions[canon] = version
                 
                 # Add metadata (summary only) to metadata cache
-                db[canon] = {
-                    "name": name,
-                    "summary": pkg.get("summary", ""),
-                }
+                _meta_entry_set(db, canon, name, pkg.get("version", "unknown"), pkg.get("summary", ""))
         
         # Save both caches (incremental)
         try:
@@ -1269,10 +1339,9 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
     results = []
     for name in matches:
         canon = canonicalize_name(name)
-        pkg_data = db.get(canon)
-        
+        pkg_data = _meta_entry_get(db, canon)
         if not pkg_data:
-            continue  # Skip if fetch failed
+            continue  # Skip if fetch failed or stale
         
         name = pkg_data["name"]
         
@@ -1373,7 +1442,9 @@ def enhanced_search(query, db, installed_map, explicit=False, override_limit=Fal
     
     results = []
     for canonical in matches:
-        pkg = db[canonical]
+        pkg = _meta_entry_get(db, canonical)
+        if not pkg:
+            continue
         name = pkg["name"]
         latest = pkg.get("version", "unknown")
         summary = pkg.get("summary", "")
@@ -1448,7 +1519,20 @@ def gather_packages(
         return results, False, cache_percent
 
     progress("Loading package index")
+    first_run = not INDEX_CACHE_FILE.exists()
+    if first_run:
+        progress("First run: fetching package index from PyPI (one-time, ~40MB)...")
     projects = fetch_index(force_refresh)
+
+    if first_run and not projects:
+        # Index fetch failed on first run -- tell the user clearly
+        import sys
+        print(
+            "\nCould not fetch the PyPI package index on first run.\n"
+            "Check your network connection and try again.\n",
+            file=sys.stderr
+        )
+        return [], False, 0
     
     progress("Checking installed packages")
     installed_map = build_installed_map()
@@ -1461,11 +1545,19 @@ def gather_packages(
     results = unified_search(query, projects, installed_map, explicit, override_limit)
     
     # Start cache worker to build/update cache in background
-    # (Logging controlled by global state, set at startup)
     searched_names = [r["name"] for r in results]
     start_cache_worker(searched_names)
-    
-    return results, False, cache_percent  # Always unified mode
+
+    # Warn if metacache is empty -- description search won't work yet
+    if cache_percent == 0 and results:
+        import sys
+        print(
+            "Note: metadata cache is still building -- results show package names only.\n"
+            "Description search will improve over the next few days.",
+            file=sys.stderr
+        )
+
+    return results, False, cache_percent
 
 
 

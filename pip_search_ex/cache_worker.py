@@ -41,6 +41,7 @@ from pip_search_ex.core.pypi import (
     fetch_index,
     load_metadata_db_with_index,
     _save_incremental_progress,
+    _meta_entry_set,
     canonicalize_name,
     load_version_cache,
     save_version_cache,
@@ -62,10 +63,11 @@ def flush_cache_chunk(cache_var):
 
         for canon, pkg_data in cache_var.items():
             version_cache[canon] = pkg_data.get("version", "unknown")
-            db[canon] = {
-                "name": pkg_data.get("name", canon),
-                "summary": pkg_data.get("summary", ""),
-            }
+            _meta_entry_set(db, canon,
+                pkg_data.get("name", canon),
+                pkg_data.get("version", "unknown"),
+                pkg_data.get("summary", ""),
+            )
 
         _save_incremental_progress(db)
         save_version_cache(version_cache)

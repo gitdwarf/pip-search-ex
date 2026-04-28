@@ -4,6 +4,11 @@
 
 A complete replacement for the discontinued `pip search` command with unified search architecture, interactive TUI, and 20+ themes.
 
+## What's New in v2.0.7
+
+- **Browser-style metadata cache**: Each cached package entry now has a 360-day LRU TTL. Access a package in a search and its clock resets. Don't touch it for 360 days and it gets evicted and re-fetched fresh next time. Actively used packages never go stale
+- **Live fetch restored correctly**: Cache misses now fetch live from PyPI for all displayed results, rate-limited to ~6-7 req/sec. No more empty results on fresh installs or sparse caches
+
 ## What's New in v2.0.6
 
 - **External theming -- two user theme dirs**: Drop your own theme XML files into either `~/.cache/pip_search_ex/themes/` or `~/.config/pip-search-ex/themes/`. Both are scanned automatically; config dir takes priority over cache dir
