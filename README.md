@@ -223,10 +223,19 @@ Whether you loved the simplicity of `pip search` or want more power, `pip-search
 
 Contributions welcome! Please feel free to submit a Pull Request.
 
+## Part of DwarvenSuite
+
+All tools follow the same philosophy: small, fast, correct, as few dependencies as possible!
+
 ## Author
 
-thedwarf
+thedwarf -- gitdwarf
+
+## Support / Tip Jar
+
+If you find pip-search-ex useful, you can support the project:
+
+[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-blue?logo=paypal)](https://www.paypal.com/paypalme/gitdwarf)
 
 ## License
-
 MIT License - see LICENSE file for details
