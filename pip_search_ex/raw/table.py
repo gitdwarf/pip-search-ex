@@ -180,7 +180,14 @@ def print_table(rows, theme, basic_mode=False, cache_percent=0, result_count_tex
     will_show_status_banner = filters and filters.get('status', False)
 
     # Combined search + result count banner
-    search_text = filters.get('query') if (filters and filters.get('query')) else "<ALL>"
+    raw_query = filters.get('query') if filters else None
+    if isinstance(raw_query, list):
+        sep = " OR " if filters.get('or_search') else ", "
+        search_text = sep.join(raw_query)
+    elif raw_query:
+        search_text = raw_query
+    else:
+        search_text = "<ALL>"
     combined = f"🔍 Search: {search_text}     {result_count_text if result_count_text else ''}"
     has_more_banners = (filters and (filters.get('installed') or filters.get('outdated') or filters.get('full'))) or will_show_status_banner
     print_banner_left(combined, print_separator=has_more_banners)

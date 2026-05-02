@@ -4,6 +4,12 @@
 
 A complete replacement for the discontinued `pip search` command with unified search architecture, interactive TUI, and 20+ themes.
 
+## What's New in v2.0.8
+
+- **OR search**: `pip-search-ex pip search ex` returns packages matching `pip` OR `search` OR `ex` in name or description -- inclusive, no quotes needed. Add `--explicit` to flip to exclusive exact matching
+- **`--packages` / `-p`**: exact lookup for specific package names -- `pip-search-ex -p gtk4 jellyfin kodi`
+- **`--installed` / `--outdated` / `--newer`**: always exact, always cache-only, never hit PyPI
+
 ## What's New in v2.0.7
 
 - **Browser-style metadata cache**: Each cached package entry now has a 360-day LRU TTL. Access a package in a search and its clock resets. Don't touch it for 360 days and it gets evicted and re-fetched fresh next time. Actively used packages never go stale
@@ -238,4 +244,5 @@ If you find pip-search-ex useful, you can support the project:
 [![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-blue?logo=paypal)](https://www.paypal.com/paypalme/gitdwarf)
 
 ## License
+
 MIT License - see LICENSE file for details

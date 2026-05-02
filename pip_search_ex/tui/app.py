@@ -514,8 +514,9 @@ class PipSearchApp(App):
         basic_widget = self.query_one("#banner-basic", Static)
 
         # Search query banner
-        if self.search_query:
-            query_widget.update(f" 🔍 {self.search_query} ")
+        display_query = ", ".join(self.search_query) if isinstance(self.search_query, list) else self.search_query
+        if display_query:
+            query_widget.update(f" 🔍 {display_query} ")
             query_widget.display = True
         else:
             query_widget.display = False

@@ -2,6 +2,20 @@
 
 All notable changes to pip-search-ex will be documented in this file.
 
+## [2.0.8] - 2026-05-02
+
+### New Features
+
+- Multi-word query is now an inclusive OR search: `pip-search-ex pip search ex` returns all packages matching `pip` OR `search` OR `ex` in name or description. Banner shows `pip OR search OR ex`
+- When `--explicit` is used with multi-word queries, terms become exclusive exact matches instead of inclusive OR
+- `--packages` / `-p` flag: explicit exact multi-package lookup -- `pip-search-ex -p gtk4 jellyfin kodi` looks up all three by exact name, banner shows `gtk4, jellyfin, kodi`
+- `--installed`, `--outdated`, and `--newer` are special-case exact lookups -- always explicit, always cache-only, never hit PyPI
+
+### Bug Fixes
+
+- `--installed` / `--outdated` regression fixed -- were rate-limited live-fetching every installed package at 0.15s/req, causing 2+ minute waits. Now correctly use `no_live_fetch=True`
+- Search banner displays OR queries as `pip OR search OR ex` and exact lists as `gtk4, jellyfin, kodi`
+
 ## [2.0.7] - 2026-04-26
 
 ### Cache Behaviour

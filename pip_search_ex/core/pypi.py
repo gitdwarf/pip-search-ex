@@ -1015,7 +1015,7 @@ def _is_fuzzy_match(query, pkg_name):
 # BASIC SEARCH (Fast, Name-Only)
 # ---------------------------------------------------------------------------
 
-def unified_search(query, projects, installed_map, explicit=False, override_limit=False):
+def unified_search(query, projects, installed_map, explicit=False, override_limit=False, no_fetch=False, or_search=False):
     """Unified search: name-first with opportunistic metadata search.
     
     1. Name matching against ALL packages (simple_index.json)
@@ -1027,8 +1027,21 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
         query: Either a string (search term) OR a list (specific package names to fetch)
     """
     # Handle query as list (specific packages) or string (search term)
-    if isinstance(query, list):
-        # Query is a list of package names - search for these specific packages
+    if isinstance(query, list) and or_search:
+        # OR search: each term is a separate fuzzy substring match, results unioned
+        seen = set()
+        name_matches = []
+        for term in query:
+            t = term.strip().lower()
+            if not t:
+                continue
+            for p in projects:
+                name = p["name"]
+                if _is_fuzzy_match(t, name) and name not in seen:
+                    seen.add(name)
+                    name_matches.append(name)
+    elif isinstance(query, list):
+        # Exact list lookup (--installed, --packages)
         name_matches = query
     else:
         # Query is a string - do normal fuzzy/explicit matching
@@ -1147,7 +1160,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
     # Live-fetch cache misses -- already capped to display_limit entries above.
     # Rate-limited: small sleep between requests to be polite to PyPI.
     FETCH_RATE_DELAY = 0.15  # seconds between requests (~6-7/sec max)
-    if to_fetch:
+    if to_fetch and not no_fetch:
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {}
             for i, name in enumerate(to_fetch):
@@ -1492,6 +1505,8 @@ def gather_packages(
     explicit=False,
     override_limit=False,
     progress_callback=None,
+    no_live_fetch=False,
+    or_search=False,
 ):
     """Search PyPI packages.
     
@@ -1509,11 +1524,15 @@ def gather_packages(
     # When query is a list of specific package names (e.g. --installed mode),
     # skip fetch_index entirely -- the full 500K index is irrelevant.
     if isinstance(query, list):
-        progress("Checking installed packages")
+        progress("Searching")
         installed_map = build_installed_map()
         _, cache_percent = is_cache_complete()
-        progress("Searching")
-        results = unified_search(query, [], installed_map, explicit, override_limit)
+        if or_search:
+            # OR search needs the full index for fuzzy matching
+            projects = fetch_index(force_refresh)
+        else:
+            projects = []
+        results = unified_search(query, projects, installed_map, explicit, override_limit, no_fetch=no_live_fetch, or_search=or_search)
         searched_names = [r["name"] for r in results]
         start_cache_worker(searched_names)
         return results, False, cache_percent

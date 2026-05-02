@@ -97,6 +97,7 @@ def run_raw_mode(query, theme_entry, gather_packages, gather_kwargs, filters, ra
         'outdated': filters.get('outdated', False),
         'full': filters.get('full', False),
         'status': filters.get('status', False),
+        'or_search': filters.get('or_search', False),
     }
     
     print_table(rows, theme, basic_mode=is_basic, cache_percent=cache_percent, 

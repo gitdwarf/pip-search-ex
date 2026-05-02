@@ -26,7 +26,9 @@ def parse_args():
         description="Search PyPI packages with TUI or raw output."
     )
     p.add_argument("--version", action="version", version=f"pip-search-ex {get_version()}")
-    p.add_argument("query", nargs="?", default="")
+    p.add_argument("query", nargs="*", default=[])
+    p.add_argument("--packages", "-p", nargs="+", metavar="PKG",
+                   help="Look up specific packages by exact name (multi-item)")
     p.add_argument("--raw", action="count", default=0, help="Raw table output. Use twice for CSV.")
 
     # Cache control
@@ -65,7 +67,20 @@ def main():
         print(f"Warning: theme '{theme_name}' not found or invalid -- falling back to 'default'", file=sys.stderr)
         theme_name = "default"
     theme_entry = THEMES[theme_name]
-    query = a.query.lower()
+
+    # --packages = explicit multi-item exact lookup
+    # multi-word query = OR substring search (each word searched independently, results unioned)
+    # single word = normal substring search
+    or_search = False
+    if a.packages:
+        query = [p.lower() for p in a.packages]
+    elif len(a.query) > 1:
+        query = [q.lower() for q in a.query]
+        or_search = True
+    elif len(a.query) == 1:
+        query = a.query[0].lower()
+    else:
+        query = ""
 
     # Set cache logging preference (core state, set once at startup)
     from pip_search_ex.core.pypi import set_cache_logging, check_self_update, gather_packages
@@ -74,29 +89,31 @@ def main():
     # Self-update check (before anything else)
     check_self_update()
 
-    # SMART OPTIMIZATION: If no query but filter flags present, 
+    # SMART OPTIMIZATION: If no query but filter flags present,
     # search only installed packages (much faster than all 738K!)
+    no_live_fetch = False
     if not query and (a.installed or a.outdated):
-        # Build list of installed package names to search for
         from pip_search_ex.core.pypi import build_installed_map, canonicalize_name
         installed_map = build_installed_map()
-        # Convert canonical names back to search queries (lowercase)
         query = list(installed_map.keys())  # List of canonical names
-        # Note: query is now a LIST, not a string!
+        no_live_fetch = True  # Don't fetch live for installed -- use cache only
 
     # Shared kwargs for gather_packages (core search params only)
     gather_kwargs = dict(
         force_refresh=a.flush,
         explicit=a.explicit,
-        override_limit=a.full,  # Note: core still uses 'override_limit' internally
+        override_limit=a.full,
+        no_live_fetch=no_live_fetch,
+        or_search=or_search,
     )
     
     # Filter state (separate from search params)
     filters = dict(
         installed=a.installed,
         outdated=a.outdated,
-        full=a.full,  # For display logic (show count)
-        status=a.status,  # Show cache status banner
+        full=a.full,
+        status=a.status,
+        or_search=or_search,
     )
 
     if a.raw:
