@@ -1215,6 +1215,33 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
         except Exception:
             pass
 
+    elif to_fetch:
+        # no_fetch=True (--installed/--outdated mode) -- emit name-only results for cache misses
+        for name in to_fetch:
+            canon = canonicalize_name(name)
+            installed_version = _installed_version(installed_map, canon)
+            origin = _installed_origin(installed_map, canon) if installed_version else None
+            origin_tag = ""
+            if origin == "distro":
+                origin_tag = " [D]"
+            elif origin == "root" and not _is_root:
+                origin_tag = " [S]"
+
+            if installed_version:
+                status, status_lines = "Installed", [f"({installed_version})", "Installed" + origin_tag]
+            else:
+                status, status_lines = "Not Installed", []
+
+            results.append({
+                "name": name,
+                "latest": "?",
+                "installed": installed_version,
+                "status": status,
+                "origin": origin,
+                "status_lines": status_lines,
+                "summary": "",
+            })
+
     results.sort(key=lambda r: r["name"].lower())
     return results
     """Quick name-only search with incremental caching.

@@ -2,6 +2,14 @@
 
 All notable changes to pip-search-ex will be documented in this file.
 
+## [2.0.9] - 2026-05-02
+
+### Bug Fixes
+
+- `--installed --raw` and `--outdated --raw` now correctly show results on fresh installs with empty metadata cache. Cache misses with `no_live_fetch=True` were being silently dropped instead of returned as name-only results
+- Fixed `OUTDATED` banner line width being off by 1 character depending on terminal emulator -- `⚠️` uses a variation selector that different terminals render inconsistently (1 or 2 columns wide), so no width calculation can be reliably correct for it. Replaced with `🔴`, which is unambiguously double-width in every terminal per the Unicode East Asian Width property. `print_banner_left` no longer needs any per-character width correction
+- TUI install/uninstall now automatically adds `--break-system-packages` on PEP 668 externally-managed environments (Ubuntu/Debian etc) -- detected once at startup via `_is_externally_managed()`, applied to all pip calls
+
 ## [2.0.8] - 2026-05-02
 
 ### New Features

@@ -136,7 +136,7 @@ def print_table(rows, theme, basic_mode=False, cache_percent=0, result_count_tex
         # Use wcswidth for accurate display width (handles emoji correctly)
         text_display_width = wcswidth(text)
         if text_display_width < 0:
-            text_display_width = len(text)  # fallback for non-printable chars
+            text_display_width = len(text)
 
         padding_needed = banner_target_width - text_display_width + width_adjust
         if padding_needed > 0:
@@ -198,7 +198,7 @@ def print_table(rows, theme, basic_mode=False, cache_percent=0, result_count_tex
         if filters.get('installed'):
             filter_tags.append("📦 INSTALLED")
         if filters.get('outdated'):
-            filter_tags.append("⚠️  OUTDATED")
+            filter_tags.append("🔴 OUTDATED")
         if filters.get('full'):
             filter_tags.append("🔓 FULL (no limit)")
     

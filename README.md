@@ -4,6 +4,11 @@
 
 A complete replacement for the discontinued `pip search` command with unified search architecture, interactive TUI, and 20+ themes.
 
+## What's New in v2.0.9
+
+- **`--installed --raw` fixed**: results now appear correctly even on fresh installs with no metadata cache built yet
+- **Ubuntu/Debian TUI install fix**: PSE now auto-detects PEP 668 externally-managed environments and adds `--break-system-packages` automatically -- no more install errors on Ubuntu VPS
+
 ## What's New in v2.0.8
 
 - **OR search**: `pip-search-ex pip search ex` returns packages matching `pip` OR `search` OR `ex` in name or description -- inclusive, no quotes needed. Add `--explicit` to flip to exclusive exact matching

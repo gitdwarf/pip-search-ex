@@ -7,6 +7,18 @@ from textual.screen import ModalScreen
 from textual import events
 import subprocess
 import sys
+import os
+
+def _is_externally_managed():
+    """Detect PEP 668 externally-managed Python environment (Ubuntu/Debian etc)."""
+    markers = [
+        "/usr/lib/python3/dist-packages/EXTERNALLY-MANAGED",
+        f"/usr/lib/python{sys.version_info.major}.{sys.version_info.minor}/EXTERNALLY-MANAGED",
+    ]
+    return any(os.path.exists(m) for m in markers)
+
+_BREAK_SYSTEM = ["--break-system-packages"] if _is_externally_managed() else []
+
 
 class ThemeSelectorScreen(ModalScreen):
     """Modal screen for selecting themes."""
@@ -880,7 +892,7 @@ class PipSearchApp(App):
             self.call_from_thread(lambda: self.push_screen(progress))
 
             cmd = [sys.executable, "-m", "pip", "install",
-                   "--root-user-action=ignore"]
+                   "--root-user-action=ignore"] + _BREAK_SYSTEM
             if upgrade:
                 cmd.append("--upgrade")
             if downgrade:
@@ -929,7 +941,7 @@ class PipSearchApp(App):
             self.call_from_thread(lambda: self.push_screen(progress))
 
             cmd = [sys.executable, "-m", "pip", "uninstall", "-y",
-                   "--root-user-action=ignore", package]
+                   "--root-user-action=ignore"] + _BREAK_SYSTEM + [package]
 
             try:
                 result = subprocess.run(
