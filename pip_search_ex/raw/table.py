@@ -97,13 +97,6 @@ def print_table(rows, theme, basic_mode=False, cache_percent=0, result_count_tex
     warning = "\033[38;5;208m"  # Orange color for warning
     info = "\033[38;5;45m"  # Cyan color for info
     
-    def display_width(text):
-        """Calculate actual display width accounting for emoji and wide characters."""
-        # Use wcswidth which properly handles emoji, combining chars, etc.
-        width = wcswidth(text)
-        # wcswidth returns -1 for non-printable chars, fall back to len()
-        return width if width >= 0 else len(text)
-
     def hline(left, mid, right):
         """Line with column dividers (for table structure)"""
         return (
@@ -159,35 +152,16 @@ def print_table(rows, theme, basic_mode=False, cache_percent=0, result_count_tex
         if print_separator:
             print(hline_solid("├", "┤"))
     
-    # Helper to print centered banner
-    def print_banner(text, color=info, print_separator=True):
-        text_len = len(text)
-        padding_total = banner_target_width - text_len
-        
-        if padding_total > 0:
-            padding_left = padding_total // 2
-            padding_right = padding_total - padding_left
-            line = " " * padding_left + text + " " * padding_right
-        else:
-            line = text[:banner_target_width]
-        
-        # Add color codes ONLY in the print statement, not in the padded line
-        print(f"{border}│{color}{line}{default}{border}│{default}")
-        if print_separator:
-            print(hline_solid("├", "┤"))
-    
     # Determine if status banner will be shown (show if --status flag, regardless of cache %)
     will_show_status_banner = filters and filters.get('status', False)
 
     # Combined search + result count banner
-    raw_query = filters.get('query') if filters else None
-    if isinstance(raw_query, list):
-        sep = " OR " if filters.get('or_search') else ", "
-        search_text = sep.join(raw_query)
-    elif raw_query:
-        search_text = raw_query
-    else:
-        search_text = "<ALL>"
+    from pip_search_ex.core.pypi import query_label
+    search_text = query_label(
+        filters.get('query') if filters else None,
+        or_search=bool(filters and filters.get('or_search')),
+        generated=bool(filters and filters.get('generated')),
+    ) or "<ALL>"
     combined = f"🔍 Search: {search_text}     {result_count_text if result_count_text else ''}"
     has_more_banners = (filters and (filters.get('installed') or filters.get('outdated') or filters.get('full'))) or will_show_status_banner
     print_banner_left(combined, print_separator=has_more_banners)
@@ -202,7 +176,6 @@ def print_table(rows, theme, basic_mode=False, cache_percent=0, result_count_tex
         if filters.get('full'):
             filter_tags.append("🔓 FULL (no limit)")
     
-    has_filter_banner = bool(filter_tags)
     if filter_tags:
         filter_line = "  ".join(filter_tags)
         # Don't print separator if this is the last banner (no status banner after)

@@ -1,7 +1,7 @@
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable, Footer, OptionList, Static, Label, Input
+from textual.widgets import DataTable, Footer, OptionList, Static, Input
 from textual.widgets.option_list import Option
-from textual.containers import Container, Vertical, Horizontal
+from textual.containers import Container, Horizontal
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual import events
@@ -443,7 +443,8 @@ class PipSearchApp(App):
 
     def __init__(self, pkgs, theme_entry, all_themes, search_query="",
                  explicit=False, installed_only=False, outdated_only=False, full_mode=False, basic_mode=False,
-                 initial_search=False, show_cache_status=False):
+                 initial_search=False, show_cache_status=False,
+                 or_search=False, no_live_fetch=False, force_refresh=False):
         super().__init__()
         self.pkgs_full = pkgs          # Full unfiltered results (for re-filtering on toggle)
         self.theme_entry = theme_entry
@@ -460,6 +461,11 @@ class PipSearchApp(App):
         self.installed_only = installed_only
         self.outdated_only = outdated_only
         self.full_mode = full_mode
+
+        # Search parameters shared with --raw (see core.pypi.plan_search)
+        self.or_search = or_search
+        self.no_live_fetch = no_live_fetch
+        self._force_refresh = force_refresh  # honoured once, by the first search
         
         # Worker state and cancellation
         self._search_worker = None  # Current search worker (if any)
@@ -526,7 +532,8 @@ class PipSearchApp(App):
         basic_widget = self.query_one("#banner-basic", Static)
 
         # Search query banner
-        display_query = ", ".join(self.search_query) if isinstance(self.search_query, list) else self.search_query
+        from pip_search_ex.core.pypi import query_label
+        display_query = query_label(self.search_query, self.or_search, self.no_live_fetch)
         if display_query:
             query_widget.update(f" 🔍 {display_query} ")
             query_widget.display = True
@@ -578,6 +585,31 @@ class PipSearchApp(App):
         else:
             legend_widget.update("  \\[S] = system/root pip install  |  \\[D] = distro-managed (check your package manager)")
 
+    def _gather(self):
+        """Run the core search with this app's current parameters.
+
+        The one place the TUI calls gather_packages, so search, filter
+        changes and post-install refresh all use the same parameters as --raw.
+        """
+        from pip_search_ex.core.pypi import gather_packages
+        force_refresh, self._force_refresh = self._force_refresh, False
+        return gather_packages(
+            self.search_query,
+            force_refresh=force_refresh,
+            explicit=self.explicit,
+            override_limit=self.full_mode,
+            no_live_fetch=self.no_live_fetch,
+            or_search=self.or_search,
+        )
+
+    def _query_text(self):
+        """The query as the user would type it (empty for a generated installed list)."""
+        if self.no_live_fetch:
+            return ""
+        if isinstance(self.search_query, list):
+            return " ".join(self.search_query)
+        return self.search_query
+
     def _apply_filters_async(self):
         """Re-fetch data in background (for explicit mode changes).
         
@@ -585,35 +617,18 @@ class PipSearchApp(App):
         Updates banners/state happen BEFORE this is called.
         """
         import threading
-        from pip_search_ex.core.pypi import gather_packages
-        
         def _filter_worker():
             self._is_searching = True
             
             try:
-                if self.explicit:
-                    # Explicit mode: re-fetch with explicit flag
-                    pkgs_full, basic_mode, cache_percent = gather_packages(
-                        self.search_query,
-                        explicit=True,
-                        override_limit=True,
-                        
-                    )
-                else:
-                    # Default mode: re-fetch without explicit
-                    pkgs_full, basic_mode, cache_percent = gather_packages(
-                        self.search_query,
-                        explicit=False,
-                        override_limit=self.full_mode,
-                        
-                    )
+                pkgs_full, basic_mode, cache_percent = self._gather()
                 
                 # Update results (back on main thread)
                 def _update():
                     self.pkgs_full = pkgs_full
                     self.basic_mode = basic_mode
                     self.cache_percent = cache_percent
-                    self._apply_client_side_filters()
+                    self._apply_client_side_filters(keep_cursor=True)
                 
                 self.call_from_thread(_update)
                 
@@ -624,11 +639,19 @@ class PipSearchApp(App):
         thread = threading.Thread(target=_filter_worker, daemon=True)
         thread.start()
     
-    def _apply_client_side_filters(self):
+    def _apply_client_side_filters(self, keep_cursor=False):
         """Apply client-side filters and update table.
         
         This is INSTANT - no network calls, just filtering local data.
+
+        keep_cursor: stay on the same package after the rebuild (used by the
+        post-install refresh and the filter toggles). A new search leaves it
+        False so the cursor starts at the top of the new results.
         """
+        keep_name = None
+        if keep_cursor:
+            current = self._get_selected_package()
+            keep_name = current["name"] if current else None
         from pip_search_ex.core.pypi import MAX_RESULTS
         
         # Filter on client side (instant)
@@ -646,6 +669,15 @@ class PipSearchApp(App):
         self.pkgs = filtered
         self._update_banners()
         self._build_table()
+        if keep_name:
+            self._select_package(keep_name)
+
+    def _select_package(self, name):
+        """Move the table cursor to the row for this package, if it is listed."""
+        for row, pkg in enumerate(self.pkgs):
+            if pkg["name"] == name:
+                self.table.move_cursor(row=row)
+                return
 
     def action_toggle_explicit(self):
         """Toggle explicit search mode (instant state change, background re-fetch)."""
@@ -664,7 +696,7 @@ class PipSearchApp(App):
         self.notify("Installed only: ON" if self.installed_only else "Installed only: OFF")
         
         # This is instant - just filter existing data
-        self._apply_client_side_filters()
+        self._apply_client_side_filters(keep_cursor=True)
 
     def action_toggle_outdated(self):
         """Toggle outdated-only filter (instant - client-side only)."""
@@ -672,7 +704,7 @@ class PipSearchApp(App):
         self.notify("Outdated only: ON" if self.outdated_only else "Outdated only: OFF")
         
         # This is instant - just filter existing data
-        self._apply_client_side_filters()
+        self._apply_client_side_filters(keep_cursor=True)
 
     def action_toggle_full(self):
         """Toggle the 200-result limit (instant - client-side only)."""
@@ -680,7 +712,7 @@ class PipSearchApp(App):
         self.notify("Full results (no limit)" if self.full_mode else "Limited to 200 results")
         
         # This is instant - just change the slice
-        self._apply_client_side_filters()
+        self._apply_client_side_filters(keep_cursor=True)
 
     def watch_current_theme_name(self, new_theme: str) -> None:
         """React to theme changes and rebuild table."""
@@ -750,7 +782,8 @@ class PipSearchApp(App):
         """Show the search input modal."""
         def handle_search(query: str | None):
             if query is not None:  # None = cancelled, "" = search all
-                self.search_query = query
+                from pip_search_ex.core.pypi import plan_search
+                self.search_query, self.or_search, self.no_live_fetch = plan_search(query)
                 # Show progress screen with spinner while searching
                 self._search_progress_screen = ProgressScreen("Searching...")
                 self.push_screen(self._search_progress_screen)
@@ -759,7 +792,7 @@ class PipSearchApp(App):
                 self._perform_search()
 
         self.push_screen(
-            SearchScreen(self.search_query),
+            SearchScreen(self._query_text()),
             handle_search
         )
 
@@ -770,20 +803,13 @@ class PipSearchApp(App):
         UI stays responsive - user can press ESC to cancel, q to quit.
         """
         import threading
-        from pip_search_ex.core.pypi import gather_packages
-        
         def _search_worker():
             self._is_searching = True
             self._cancel_search = False
             
             try:
                 # Fetch in background thread (non-blocking)
-                pkgs_full, basic_mode, cache_percent = gather_packages(
-                    self.search_query,
-                    explicit=self.explicit,
-                    override_limit=self.full_mode,
-                    
-                )
+                pkgs_full, basic_mode, cache_percent = self._gather()
                 
                 # Check if cancelled
                 if self._cancel_search:
@@ -823,6 +849,7 @@ class PipSearchApp(App):
                 self.call_from_thread(_update_results)
             
             except Exception as e:
+                err = str(e)  # `e` is unbound once this block ends; closures use `err`
                 # Dismiss progress screen on error
                 def _show_error():
                     if self._search_progress_screen:
@@ -831,7 +858,7 @@ class PipSearchApp(App):
                         except Exception:
                             pass
                         self._search_progress_screen = None
-                    self.notify(f"Search error: {e}", severity="error")
+                    self.notify(f"Search error: {err}", severity="error")
                 
                 self.call_from_thread(_show_error)
             
@@ -914,8 +941,8 @@ class PipSearchApp(App):
 
                 if result.returncode == 0:
                     action_past = "reinstalled" if reinstall else ("downgraded" if downgrade else ("updated" if upgrade else "installed"))
-                    self.call_from_thread(progress.set_complete)
                     self._refresh_packages()
+                    self.call_from_thread(progress.set_complete)
                     self.call_from_thread(lambda: self.notify(f"Successfully {action_past} {package}", severity="information"))
                 else:
                     action_past = "reinstall" if reinstall else ("downgrade" if downgrade else ("update" if upgrade else "install"))
@@ -925,7 +952,7 @@ class PipSearchApp(App):
                 error_msg = f"Error: {str(e)}"
                 self.call_from_thread(lambda: progress.update_content(error_msg))
                 self.call_from_thread(progress.set_complete)
-                self.call_from_thread(lambda: self.notify(f"Error: {str(e)}", severity="error"))
+                self.call_from_thread(lambda: self.notify(error_msg, severity="error"))
         
         # Start daemon thread
         thread = threading.Thread(target=_install_worker, daemon=True)
@@ -955,8 +982,8 @@ class PipSearchApp(App):
                 self.call_from_thread(lambda: progress.update_content(output))
 
                 if result.returncode == 0:
-                    self.call_from_thread(progress.set_complete)
                     self._refresh_packages()
+                    self.call_from_thread(progress.set_complete)
                     self.call_from_thread(lambda: self.notify(f"Successfully uninstalled {package}", severity="information"))
                 else:
                     self.call_from_thread(progress.set_complete)
@@ -965,46 +992,37 @@ class PipSearchApp(App):
                 error_msg = f"Error: {str(e)}"
                 self.call_from_thread(lambda: progress.update_content(error_msg))
                 self.call_from_thread(progress.set_complete)
-                self.call_from_thread(lambda: self.notify(f"Error: {str(e)}", severity="error"))
+                self.call_from_thread(lambda: self.notify(error_msg, severity="error"))
         
         # Start daemon thread
         thread = threading.Thread(target=_uninstall_worker, daemon=True)
         thread.start()
 
     def _refresh_packages(self):
-        """Refresh the package list after install/uninstall in background.
-        
-        Uses daemon thread - dies with app.
+        """Bring the list up to date after pip changed what is installed.
+
+        Called from the install/uninstall worker threads, before the progress
+        screen is marked complete, so the list is already right when the user
+        gets control back. No re-search: only the installed state of the rows
+        on screen is re-worked (core.pypi.refresh_installed_state), which
+        takes a fraction of a second whatever the size of the list.
         """
-        import threading
-        from pip_search_ex.core.pypi import gather_packages
-        
-        def _refresh_worker():
-            self._is_searching = True
-            
-            try:
-                # Fetch in background
-                pkgs_full, basic_mode = gather_packages(
-                    self.search_query,
-                    explicit=self.explicit,
-                    override_limit=self.full_mode,
-                    
-                )
-                
-                # Apply filters and update
-                def _update():
-                    self.pkgs_full = pkgs_full
-                    self.basic_mode = basic_mode
-                    self._apply_client_side_filters()
-                
-                self.call_from_thread(_update)
-            
-            finally:
-                self._is_searching = False
-        
-        # Start daemon thread
-        thread = threading.Thread(target=_refresh_worker, daemon=True)
-        thread.start()
+        from pip_search_ex.core.pypi import build_installed_map, refresh_installed_state
+
+        try:
+            installed_map = build_installed_map()
+
+            def _update():
+                refresh_installed_state(self.pkgs_full, installed_map)
+                self._apply_client_side_filters(keep_cursor=True)
+
+            self.call_from_thread(_update)
+        except Exception as e:
+            # Never fail silently: a stale list that claims to be current is worse
+            err = str(e)  # `e` is unbound once this block ends; the closure uses `err`
+            self.call_from_thread(
+                lambda: self.notify(f"Could not refresh package list: {err}", severity="warning")
+            )
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection (Enter key)."""

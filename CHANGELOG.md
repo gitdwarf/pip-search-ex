@@ -2,6 +2,33 @@
 
 All notable changes to pip-search-ex will be documented in this file.
 
+## [2.0.10] - 2026-10-10
+
+### Bug Fixes
+
+- Fixed the TUI search list never updating a package's status after an install, update, reinstall, downgrade or uninstall. A package would keep showing its old state: still "Installed" after being uninstalled, still "Outdated" after being updated, still "Not Installed" after being installed. The post-install refresh unpacked two values from `gather_packages`, which returns three, so the refresh raised `ValueError` in its background thread and the list never changed. The refresh now unpacks all three (keeping the cache percentage in sync, same as a normal search) and reports a warning instead of failing silently if a refresh ever does fail. Measured on tinydb, all four transitions: Outdated to Installed (update), Installed to Not Installed (uninstall), Not Installed to Installed (install), Installed to Not Installed again; the unfixed build stayed on Outdated through all of them
+
+- TUI and `--raw` now run the exact same search. The TUI never passed `or_search`, `no_live_fetch` or `--flush` to the core, so `pip-search-ex tinydb jsonpickle` gave 29 results with `--raw --raw` but only 2 in the TUI, and `--installed` in the TUI could try live PyPI fetches. All search parameters are now worked out in one place, `plan_search()` in `core/pypi.py`, used by the CLI, `--raw` and the TUI (including words typed into the TUI search box), and the TUI makes its single core call through one method, `_gather()`, instead of three copies. Measured: OR search 29 vs 29, `--packages` 3 vs 3, `--installed` 161 vs 161 (was 2 vs 29 for OR before)
+- Toggling Explicit in the TUI no longer silently turns on `--full`; it now follows the same rules as the command line
+
+- The `--installed` / `--outdated` search banner no longer prints the whole generated list of installed package names (1803 characters on a test box). Both `--raw` and the TUI now show `installed packages`, from one shared `query_label()` in `core/pypi.py`. Typed queries still show as typed (`a OR b`, or `a, b` for `--packages`)
+- The TUI cursor now stays on the same package after the post-install refresh and after toggling Explicit, Installed, Outdated or Full. It used to jump back to the first row (measured: row 2 became row 0). New searches still start at the top
+- Removed `enhanced_search()` from `core/pypi.py`: dead code since 2.0.0, never called
+
+- The TUI list now updates the moment pip finishes, instead of a second or more later (long enough to click the package again and be offered the wrong action). The old refresh re-ran the whole search: measured 1.7s for one package and 32s for `django`. It now re-works only the installed state of the rows on screen, from one new core function `installed_state()` (also catches dependencies pip installed, updated or removed along with the package), in about 0.12s whatever the list size, and does it before the progress screen is marked complete. The result is identical to a full search (checked for Outdated, Installed and Not Installed)
+
+### Code cleanup (no behaviour change)
+
+- The installed / outdated / newer status and `[D]` / `[S]` origin tag logic was copy-pasted five times in `unified_search()` (and twice more in unreachable code). It now exists once, in `installed_state()`, and every result row is built by one `_result_row()`. Measured before and after on four query types (single name, exact list, OR search, `--installed`; 201 rows): zero differences in any field
+- Removed about 190 lines of unreachable code left after the `return` in `unified_search()` (the body of `basic_search()`, whose `def` was removed in 2.0.0 but whose body was not), the four never-called `start_background_cache_build` / `stop_background_cache_build` definitions, the unused `display_width()` and `print_banner()` helpers in `raw/table.py`, `c256()` in `ansi.py`, and unused imports and variables. `core/pypi.py` went from 1637 to 1249 lines
+- `cache_worker.py`: the two stages (searched packages, then everything else) each carried their own copy of the same fetch-and-flush loop. They now share one `process_packages()` built on one `fetch_chunk()`, and `requests` / `time` are imported once instead of inside both loops. Measured with a no-network harness (1,075 events: fetches, sessions, flushes, failures, order): identical before and after. The request rate is unchanged, still 2 per second, and is now a named constant `REQUEST_DELAY`
+- Removed `ansi.py` (referenced by nothing, never packaged) and `testthemes` (the old bash theme check that `validate_themes.py` replaced in 2.0.6) from the source tree
+- TUI error handlers now copy the error text before using it in a callback, instead of relying on the exception variable still existing when the callback runs
+
+### Documentation
+
+- README rewritten to the DwarvenSuite template (Philosophy, What it does, Features, Installation, Usage, Part of DwarvenSuite, Author, Tip Jar, License). Release notes now live only in this file
+
 ## [2.0.9] - 2026-05-02
 
 ### Bug Fixes

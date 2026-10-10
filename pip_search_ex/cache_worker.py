@@ -6,17 +6,20 @@ incrementally in the background without blocking the main search interface.
 
 Stages:
 1. Searched packages - versions & metadata (high priority)
-2. All packages - versions only (bulk work)
-3. All packages - full metadata (low priority, long tail)
+2. All other packages - versions & metadata (bulk work, long tail)
 
-Runs in 200-package chunks for atomicity and rate-limiting.
+Both stages run through the same chunk loop, in 200-package chunks for
+atomicity and rate-limiting.
 """
 
 import os
 import sys
 import json
+import time
 import logging
 from pathlib import Path
+
+import requests
 
 # Set up logging only if explicitly enabled via --status flag
 CACHE_DIR = Path.home() / ".cache" / "pip_search_ex"
@@ -48,6 +51,7 @@ from pip_search_ex.core.pypi import (
 )
 
 CHUNK_SIZE = 200  # Process 200 packages at a time
+REQUEST_DELAY = 0.5  # Slow and lazy: 500ms = max 2 requests/sec, PyPI will ignore us
 
 
 def flush_cache_chunk(cache_var):
@@ -78,126 +82,84 @@ def flush_cache_chunk(cache_var):
         logging.error(f"Failed to flush cache chunk: {e}")
 
 
+def fetch_chunk(chunk):
+    """Fetch metadata for one chunk of package names, slowly.
+
+    Returns {canonical_name: metadata}. A package that fails to fetch is
+    logged and skipped; it never stops the chunk.
+    """
+    cache_var = {}
+    # One session per chunk for HTTP connection reuse
+    session = requests.Session()
+    for pkg_name in chunk:
+        try:
+            metadata = fetch_single_metadata(pkg_name, session=session)
+            if metadata:
+                cache_var[canonicalize_name(pkg_name)] = metadata
+            time.sleep(REQUEST_DELAY)
+        except Exception as e:
+            logging.warning(f"Failed to fetch {pkg_name}: {e}")
+    session.close()
+    return cache_var
+
+
+def process_packages(names, label):
+    """Fetch and cache `names` in chunks, flushing each chunk to disk.
+
+    The one chunk loop both stages use. `label` only names the stage in the log.
+    """
+    total_chunks = (len(names) + CHUNK_SIZE - 1) // CHUNK_SIZE
+    for i in range(0, len(names), CHUNK_SIZE):
+        chunk = names[i:i + CHUNK_SIZE]
+        chunk_num = i // CHUNK_SIZE + 1
+        logging.debug(f"{label}: Chunk {chunk_num}/{total_chunks} ({len(chunk)} packages)")
+        flush_cache_chunk(fetch_chunk(chunk))
+        if chunk_num % 10 == 0:
+            logging.info(f"{label}: Completed {chunk_num}/{total_chunks} chunks")
+
+
 def build_cache(searched_packages):
     """Build cache incrementally in stages.
-    
+
     Args:
         searched_packages: List of package names that were just searched for
     """
-    logging.info(f"=== Cache worker started ===")
+    logging.info("=== Cache worker started ===")
     logging.debug(f"Searched packages: {len(searched_packages)}")
-    
-    # Stage 1 & 2: Searched packages (high priority)
+
+    # Stage 1: packages the user just searched for (high priority)
     if searched_packages:
-        logging.info(f"Stage 1-2: Processing {len(searched_packages)} searched packages")
-        
-        for i in range(0, len(searched_packages), CHUNK_SIZE):
-            chunk = searched_packages[i:i+CHUNK_SIZE]
-            chunk_num = i // CHUNK_SIZE + 1
-            total_chunks = (len(searched_packages) + CHUNK_SIZE - 1) // CHUNK_SIZE
-            
-            logging.debug(f"Stage 1-2: Chunk {chunk_num}/{total_chunks} ({len(chunk)} packages)")
-            
-            # Build in-memory cache for this chunk
-            cache_var = {}
-            
-            # Use a session for HTTP connection reuse
-            # BUT add SLOW rate limiting - lazy background cache PyPI will ignore
-            import requests
-            import time
-            session = requests.Session()
-            
-            for pkg_name in chunk:
-                try:
-                    metadata = fetch_single_metadata(pkg_name, session=session)
-                    if metadata:
-                        canon = canonicalize_name(pkg_name)
-                        cache_var[canon] = metadata
-                    
-                    # Rate limit: Slow and lazy - PyPI will ignore us
-                    time.sleep(0.5)  # 500ms = max 2 requests/sec
-                    
-                except Exception as e:
-                    logging.warning(f"Failed to fetch {pkg_name}: {e}")
-            
-            session.close()
-            
-            # Flush chunk to disk
-            flush_cache_chunk(cache_var)
-            logging.info(f"Stage 1-2: Completed chunk {chunk_num}/{total_chunks}")
-        
-        logging.info(f"Stage 1-2: Complete")
-    
-    # Stage 3 & 4: All other packages (background fill)
-    logging.info("Stage 3-4: Building full cache")
-    
+        logging.info(f"Stage 1: Processing {len(searched_packages)} searched packages")
+        process_packages(searched_packages, "Stage 1")
+        logging.info("Stage 1: Complete")
+
+    # Stage 2: everything else not yet cached (background fill)
+    logging.info("Stage 2: Building full cache")
     try:
-        # Get all packages
         all_packages = fetch_index(force_refresh=False)
         logging.debug(f"Total PyPI packages: {len(all_packages)}")
-        
-        # Get already cached packages
+
         db, _ = load_metadata_db_with_index()
         already_cached = set(db.keys())
         logging.debug(f"Already cached: {len(already_cached)} packages")
-        
-        # Find packages that need caching
+
         remaining = [
-            p["name"] for p in all_packages 
+            p["name"] for p in all_packages
             if canonicalize_name(p["name"]) not in already_cached
         ]
-        logging.info(f"Stage 3-4: {len(remaining)} packages remaining")
-        
-        # Process in chunks
-        total_chunks = (len(remaining) + CHUNK_SIZE - 1) // CHUNK_SIZE
-        
-        for i in range(0, len(remaining), CHUNK_SIZE):
-            chunk = remaining[i:i+CHUNK_SIZE]
-            chunk_num = i // CHUNK_SIZE + 1
-            
-            logging.debug(f"Stage 3-4: Chunk {chunk_num}/{total_chunks} ({len(chunk)} packages)")
-            
-            # Build in-memory cache for this chunk
-            cache_var = {}
-            
-            # Use a session for HTTP connection reuse
-            # BUT add SLOW rate limiting - lazy background cache PyPI will ignore
-            import requests
-            import time
-            session = requests.Session()
-            
-            for pkg_name in chunk:
-                try:
-                    metadata = fetch_single_metadata(pkg_name, session=session)
-                    if metadata:
-                        canon = canonicalize_name(pkg_name)
-                        cache_var[canon] = metadata
-                    
-                    # Rate limit: Slow and lazy - PyPI will ignore us
-                    time.sleep(0.5)  # 500ms = max 2 requests/sec
-                    
-                except Exception as e:
-                    logging.warning(f"Failed to fetch {pkg_name}: {e}")
-            
-            session.close()
-            
-            # Flush chunk to disk
-            flush_cache_chunk(cache_var)
-            
-            # Log progress every 10 chunks
-            if chunk_num % 10 == 0:
-                logging.info(f"Stage 3-4: Completed {chunk_num}/{total_chunks} chunks")
-        
-        logging.info(f"=== Cache worker completed successfully ===")
-        
+        logging.info(f"Stage 2: {len(remaining)} packages remaining")
+
+        process_packages(remaining, "Stage 2")
+        logging.info("=== Cache worker completed successfully ===")
+
     except Exception as e:
-        logging.error(f"Stage 3-4 failed: {e}")
+        logging.error(f"Stage 2 failed: {e}")
 
 
 def main():
     """Main entry point for cache worker."""
     logging.info("Cache worker process started")
-    
+
     # Read searched packages from environment
     searched_packages = []
     if 'PIP_SEARCH_EX_PACKAGES' in os.environ:
@@ -206,7 +168,7 @@ def main():
             logging.debug(f"Loaded {len(searched_packages)} searched packages from environment")
         except Exception as e:
             logging.error(f"Failed to parse PIP_SEARCH_EX_PACKAGES: {e}")
-    
+
     # Build cache
     try:
         build_cache(searched_packages)

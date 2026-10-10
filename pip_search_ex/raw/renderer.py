@@ -98,6 +98,7 @@ def run_raw_mode(query, theme_entry, gather_packages, gather_kwargs, filters, ra
         'full': filters.get('full', False),
         'status': filters.get('status', False),
         'or_search': filters.get('or_search', False),
+        'generated': filters.get('no_live_fetch', False),
     }
     
     print_table(rows, theme, basic_mode=is_basic, cache_percent=cache_percent, 

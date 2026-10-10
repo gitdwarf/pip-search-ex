@@ -3,8 +3,6 @@ import argparse
 from importlib.metadata import version as pkg_version, PackageNotFoundError
 
 from pip_search_ex.core.theme_loader import load_themes
-from pip_search_ex.core.pypi import gather_packages
-from pip_search_ex.raw.renderer import run_raw_mode
 from pip_search_ex.tui.app import PipSearchApp
 
 THEMES = load_themes("themes")
@@ -68,19 +66,9 @@ def main():
         theme_name = "default"
     theme_entry = THEMES[theme_name]
 
-    # --packages = explicit multi-item exact lookup
-    # multi-word query = OR substring search (each word searched independently, results unioned)
-    # single word = normal substring search
-    or_search = False
-    if a.packages:
-        query = [p.lower() for p in a.packages]
-    elif len(a.query) > 1:
-        query = [q.lower() for q in a.query]
-        or_search = True
-    elif len(a.query) == 1:
-        query = a.query[0].lower()
-    else:
-        query = ""
+    from pip_search_ex.core.pypi import plan_search
+    query, or_search, no_live_fetch = plan_search(
+        a.query, packages=a.packages, installed=a.installed, outdated=a.outdated)
 
     # Set cache logging preference (core state, set once at startup)
     from pip_search_ex.core.pypi import set_cache_logging, check_self_update, gather_packages
@@ -88,15 +76,6 @@ def main():
 
     # Self-update check (before anything else)
     check_self_update()
-
-    # SMART OPTIMIZATION: If no query but filter flags present,
-    # search only installed packages (much faster than all 738K!)
-    no_live_fetch = False
-    if not query and (a.installed or a.outdated):
-        from pip_search_ex.core.pypi import build_installed_map, canonicalize_name
-        installed_map = build_installed_map()
-        query = list(installed_map.keys())  # List of canonical names
-        no_live_fetch = True  # Don't fetch live for installed -- use cache only
 
     # Shared kwargs for gather_packages (core search params only)
     gather_kwargs = dict(
@@ -114,6 +93,7 @@ def main():
         full=a.full,
         status=a.status,
         or_search=or_search,
+        no_live_fetch=no_live_fetch,
     )
 
     if a.raw:
@@ -133,6 +113,9 @@ def main():
             basic_mode=True,  # Will be updated when search completes
             initial_search=True,  # Signal that we need to search on mount
             show_cache_status=a.status,  # Pass --status flag
+            or_search=or_search,
+            no_live_fetch=no_live_fetch,
+            force_refresh=a.flush,
         )
         app.run()
         

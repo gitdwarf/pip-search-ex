@@ -466,15 +466,8 @@ def start_cache_worker(searched_packages=None):
         pass
 
 
-# Keep old function names for compatibility but redirect to new ones
-def stop_background_cache_build():
-    """Deprecated: Use stop_cache_worker() instead."""
-    stop_cache_worker()
 
 
-def start_background_cache_build(force_refresh=False):
-    """Deprecated: Use start_cache_worker() instead."""
-    start_cache_worker()
 
 def load_metadata_db_with_index():
     """Load metadata DB. Returns (packages_dict, []).
@@ -504,128 +497,8 @@ def load_metadata_db_with_index():
         return {}, []
 
 
-def stop_background_cache_build():
-    """Stop any running background cache build process.
-    
-    Called before starting a new search to ensure clean state.
-    """
-    if not METADATA_DB_LOCK.exists():
-        return  # No background process running
-    
-    try:
-        # Read PID from lock file
-        pid_str = METADATA_DB_LOCK.read_text().strip()
-        if not pid_str:
-            METADATA_DB_LOCK.unlink()
-            return
-        
-        pid = int(pid_str)
-        
-        # Try to kill the process
-        try:
-            import signal
-            os.kill(pid, signal.SIGTERM)  # Graceful termination
-            time.sleep(0.1)  # Give it a moment
-            # Check if still alive
-            try:
-                os.kill(pid, 0)  # Check if process exists
-                # Still alive, force kill
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass  # Already dead
-        except (ProcessLookupError, OSError):
-            pass  # Process doesn't exist
-        
-        # Remove lock file
-        METADATA_DB_LOCK.unlink()
-        
-    except Exception:
-        # If anything fails, just remove the lock file
-        try:
-            METADATA_DB_LOCK.unlink()
-        except Exception:
-            pass
 
 
-def start_background_cache_build(force_refresh=False):
-    """Start background process to build/update full metadata cache incrementally.
-    
-    Only fetches metadata for NEW packages since last sync.
-    Runs as FULLY DETACHED process (like bash &).
-    """
-    # Background sync now ENABLED
-    if METADATA_DB_LOCK.exists() and not force_refresh:
-        # Check if lock is stale (older than 1 hour - assume crashed)
-        try:
-            lock_time = METADATA_DB_LOCK.stat().st_mtime
-            if time.time() - lock_time < 3600:  # Less than 1 hour old
-                return  # Already building
-        except Exception:
-            pass
-    
-    # Create lock file
-    try:
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        METADATA_DB_LOCK.write_text(str(os.getpid()))
-    except Exception:
-        pass
-    
-    # Fork a completely detached background process
-    # This is the Python equivalent of "command &" in bash
-    try:
-        pid = os.fork()
-        if pid > 0:
-            # Parent process - return immediately
-            return
-    except (AttributeError, OSError):
-        # fork() not available (Windows) - fall back to thread
-        import threading
-        thread = threading.Thread(
-            target=_background_sync_worker,
-            args=(force_refresh,),
-            daemon=True
-        )
-        thread.start()
-        return
-    
-    # Child process - detach completely
-    try:
-        # Create new session (detach from terminal)
-        os.setsid()
-        
-        # Redirect stdout/stderr to log file for debugging
-        log_file = CACHE_DIR / "sync.log"
-        log_fd = open(log_file, 'a')
-        sys.stdin.close()
-        sys.stdout = log_fd
-        sys.stderr = log_fd
-        
-        print(f"\n=== Background sync started at {time.ctime()} ===")
-        
-        # Run the sync
-        _background_sync_worker(force_refresh)
-        
-        print(f"=== Background sync completed at {time.ctime()} ===\n")
-        log_fd.close()
-        
-        # Exit child process
-        os._exit(0)
-        
-    except Exception as e:
-        # Log the error
-        try:
-            print(f"ERROR: {e}")
-            import traceback
-            traceback.print_exc()
-        except Exception:
-            pass
-        
-        # Clean up on error
-        try:
-            METADATA_DB_LOCK.unlink()
-        except Exception:
-            pass
-        os._exit(1)
 
 
 def _background_sync_worker(force_refresh=False):
@@ -992,6 +865,56 @@ def compare_versions(installed_version, latest_version):
     return (b > a) - (b < a)
 
 
+def installed_state(installed_map, name, latest):
+    """Installed state of one package: the single place status is worked out.
+
+    Returns the row fields {installed, status, origin, status_lines} for
+    `name` given the latest known version. Status is Outdated, Newer,
+    Installed or Not Installed. The origin tag ([D] distro, [S] system) is
+    part of status_lines only, never of status.
+    """
+    canon = canonicalize_name(name)
+    installed_version = _installed_version(installed_map, canon)
+    if not installed_version:
+        return {"installed": None, "status": "Not Installed", "origin": None, "status_lines": []}
+    origin = _installed_origin(installed_map, canon)
+    origin_tag = ""
+    if origin == "distro":
+        origin_tag = " [D]"
+    elif origin == "root" and not _is_root:
+        origin_tag = " [S]"
+    cmp = compare_versions(installed_version, latest)
+    status = "Outdated" if cmp > 0 else ("Newer" if cmp < 0 else "Installed")
+    return {
+        "installed": installed_version,
+        "status": status,
+        "origin": origin,
+        "status_lines": [f"({installed_version})", status + origin_tag],
+    }
+
+
+def _result_row(installed_map, name, latest, summary):
+    """One search result row: the only place a row is assembled."""
+    row = {"name": name, "latest": latest, "summary": summary}
+    row.update(installed_state(installed_map, name, latest))
+    return row
+
+
+def refresh_installed_state(rows, installed_map):
+    """Re-work the installed state of already-found rows, in place, with no search.
+
+    Used after pip changes what is installed: nothing needs re-searching,
+    only the installed state of the rows already on screen (the package
+    acted on, and any dependency pip installed, updated or removed with it).
+    """
+    for row in rows:
+        latest = row.get("latest")
+        if latest in (None, "unknown"):
+            latest = _installed_version(installed_map, canonicalize_name(row["name"])) or latest
+        row.update(installed_state(installed_map, row["name"], latest))
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # SEARCH MATCHING
 # ---------------------------------------------------------------------------
@@ -1118,39 +1041,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
             else:
                 latest = "unknown"
             
-            # Build status with origin awareness
-            origin = _installed_origin(installed_map, canon) if installed_version else None
-            origin_tag = ""
-            if origin == "distro":
-                origin_tag = " [D]"
-            elif origin == "root" and not _is_root:
-                origin_tag = " [S]"
-
-
-            if installed_version:
-                cmp = compare_versions(installed_version, latest)
-                if cmp > 0:
-                    status = "Outdated"
-                    status_lines = [f"({installed_version})", "Outdated" + origin_tag]
-                elif cmp < 0:
-                    status = "Newer"
-                    status_lines = [f"({installed_version})", "Newer" + origin_tag]
-                else:
-                    status = "Installed"
-                    status_lines = [f"({installed_version})", "Installed" + origin_tag]
-            else:
-                status = "Not Installed"
-                status_lines = []
-            
-            results.append({
-                "name": name,
-                "latest": latest,
-                "installed": installed_version,
-                "status": status,
-                "origin": origin,
-                "status_lines": status_lines,
-                "summary": cached.get("summary", ""),
-            })
+            results.append(_result_row(installed_map, name, latest, cached.get("summary", "")))
         else:
             # Not in local cache -- queue for live fetch if result set is small enough.
             # For broad searches (hundreds of matches) we never live-fetch -- name-only is fine.
@@ -1180,34 +1071,7 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
 
                 _meta_entry_set(db, canon, name, latest, summary)
 
-                installed_version = _installed_version(installed_map, canon)
-                origin = _installed_origin(installed_map, canon) if installed_version else None
-                origin_tag = ""
-                if origin == "distro":
-                    origin_tag = " [D]"
-                elif origin == "root" and not _is_root:
-                    origin_tag = " [S]"
-
-                if installed_version:
-                    cmp = compare_versions(installed_version, latest)
-                    if cmp > 0:
-                        status, status_lines = "Outdated", [f"({installed_version})", "Outdated" + origin_tag]
-                    elif cmp < 0:
-                        status, status_lines = "Newer", [f"({installed_version})", "Newer" + origin_tag]
-                    else:
-                        status, status_lines = "Installed", [f"({installed_version})", "Installed" + origin_tag]
-                else:
-                    status, status_lines = "Not Installed", []
-
-                results.append({
-                    "name": name,
-                    "latest": latest,
-                    "installed": installed_version,
-                    "status": status,
-                    "origin": origin,
-                    "status_lines": status_lines,
-                    "summary": summary,
-                })
+                results.append(_result_row(installed_map, name, latest, summary))
 
         # Persist newly fetched metadata
         try:
@@ -1218,219 +1082,10 @@ def unified_search(query, projects, installed_map, explicit=False, override_limi
     elif to_fetch:
         # no_fetch=True (--installed/--outdated mode) -- emit name-only results for cache misses
         for name in to_fetch:
-            canon = canonicalize_name(name)
-            installed_version = _installed_version(installed_map, canon)
-            origin = _installed_origin(installed_map, canon) if installed_version else None
-            origin_tag = ""
-            if origin == "distro":
-                origin_tag = " [D]"
-            elif origin == "root" and not _is_root:
-                origin_tag = " [S]"
-
-            if installed_version:
-                status, status_lines = "Installed", [f"({installed_version})", "Installed" + origin_tag]
-            else:
-                status, status_lines = "Not Installed", []
-
-            results.append({
-                "name": name,
-                "latest": "?",
-                "installed": installed_version,
-                "status": status,
-                "origin": origin,
-                "status_lines": status_lines,
-                "summary": "",
-            })
+            results.append(_result_row(installed_map, name, "?", ""))
 
     results.sort(key=lambda r: r["name"].lower())
     return results
-    """Quick name-only search with incremental caching.
-    
-    This is the fallback when full cache isn't ready yet.
-    IMPORTANT: Only matches package NAMES, not summaries (we don't have those yet).
-    
-    For empty query: Returns name-only list instantly, fetches metadata in background.
-    For normal query: Fetches and caches ALL matching packages.
-    Returns all results - frontends apply display limits.
-    """
-    q = query.strip().lower()
-    matches = []
-    
-    # Match against names only - collect ALL matches
-    for p in projects:
-        name = p["name"]
-        
-        if q:  # If query provided, apply filtering
-            if explicit:
-                if not _is_explicit_match(q, name):
-                    continue
-            else:
-                if not _is_fuzzy_match(q, name):
-                    continue
-        # Empty query: include everything (but we'll handle it specially below)
-        
-        matches.append(name)
-        # NO LIMIT HERE - fetch everything, frontends filter for display
-    
-    # EMPTY QUERY OPTIMIZATION: Don't fetch metadata for all 500K packages
-    # Return name-only results immediately, let background sync handle metadata
-    if not q:
-        # Build name-only results from index + installed status
-        results = []
-        for name in matches:
-            canon = canonicalize_name(name)
-            
-            # Get installed version (just a string)
-            installed_version = _installed_version(installed_map, canon)
-            
-            # Check if we have metadata cached
-            cached = _meta_entry_get(db, canon)
-            
-            # Determine latest version - check version cache first, then metadata fallback
-            if canon in version_cache:
-                latest = version_cache[canon]
-            elif cached and "version" in cached:
-                # Fallback: old format still has version in metadata
-                latest = cached.get("version", "unknown")
-            elif installed_version:
-                latest = installed_version  # Use installed as "latest" if no cache
-            else:
-                latest = "unknown"
-            
-            # Build status info with origin awareness
-            origin = _installed_origin(installed_map, canon) if installed_version else None
-            origin_tag = ""
-            if origin == "distro":
-                origin_tag = " [D]"
-            elif origin == "root" and not _is_root:
-                origin_tag = " [S]"
-
-
-            if installed_version:
-                cmp = compare_versions(installed_version, latest)
-                if cmp > 0:
-                    status = "Outdated"
-                    status_lines = [f"({installed_version})", "Outdated" + origin_tag]
-                elif cmp < 0:
-                    status = "Newer"
-                    status_lines = [f"({installed_version})", "Newer" + origin_tag]
-                else:
-                    status = "Installed"
-                    status_lines = [f"({installed_version})", "Installed" + origin_tag]
-            else:
-                status = "Not Installed"
-                status_lines = []
-            
-            results.append({
-                "name": name,
-                "latest": latest,
-                "installed": installed_version,
-                "status": status,
-                "origin": origin,
-                "status_lines": status_lines,
-                "summary": cached.get("summary", "") if cached else "",
-            })
-        
-        # Trigger background cache build for metadata (non-blocking)
-        start_background_cache_build(force_refresh=False)
-        
-        return results
-    
-    # NORMAL QUERY: Fetch metadata for matching packages (blocks until done)
-    # Determine which packages need fetching
-    to_fetch = []
-    for name in matches:
-        canon = canonicalize_name(name)
-        if canon not in db:
-            to_fetch.append(name)
-    
-    # Fetch missing packages (all of them, not just 200)
-    if to_fetch:
-        fetched_versions = {}  # Track new versions
-        
-        with ThreadPoolExecutor(max_workers=12) as executor:
-            futures = {executor.submit(fetch_single_metadata, name): name for name in to_fetch}
-            
-            for future in as_completed(futures):
-                pkg = future.result()
-                if not pkg:
-                    continue
-                
-                name = pkg["name"]
-                canon = canonicalize_name(name)
-                
-                # Add version to version cache
-                version = pkg.get("version", "unknown")
-                version_cache[canon] = version
-                fetched_versions[canon] = version
-                
-                # Add metadata (summary only) to metadata cache
-                _meta_entry_set(db, canon, name, pkg.get("version", "unknown"), pkg.get("summary", ""))
-        
-        # Save both caches (incremental)
-        try:
-            _save_metadata_db(db, [])  # Summaries only
-            if fetched_versions:
-                save_version_cache(version_cache)  # Versions
-        except Exception:
-            pass  # Don't fail if we can't save
-    
-    # Build results from cache - return ALL results
-    results = []
-    for name in matches:
-        canon = canonicalize_name(name)
-        pkg_data = _meta_entry_get(db, canon)
-        if not pkg_data:
-            continue  # Skip if fetch failed or stale
-        
-        name = pkg_data["name"]
-        
-        # Get version from version cache (or fallback to old format)
-        if canon in version_cache:
-            latest = version_cache[canon]
-        else:
-            # Fallback for old cache format
-            latest = pkg_data.get("version", "unknown")
-        
-        summary = pkg_data.get("summary", "")
-        installed = _installed_version(installed_map, canon)
-        
-        if installed:
-            origin = _installed_origin(installed_map, canonicalize_name(name))
-            origin_tag = " [D]" if origin == "distro" else (" [S]" if (origin == "root" and not _is_root) else "")
-            cmp = compare_versions(installed, latest)
-            if cmp > 0:
-                status = "Outdated"
-                status_lines = [f"({installed})", "Outdated" + origin_tag]
-            elif cmp < 0:
-                status = "Newer"
-                status_lines = [f"({installed})", "Newer" + origin_tag]
-            else:
-                status = "Installed"
-                status_lines = [f"({installed})", "Installed" + origin_tag]
-        else:
-            origin = None
-            status = "Not Installed"
-            status_lines = ["Not Installed"]
-        
-        results.append({
-            "name": name,
-            "latest": latest,
-            "installed": installed,
-            "status": status,
-            "origin": origin,
-            "status_lines": status_lines,
-            "summary": summary,
-        })
-    
-    results.sort(key=lambda r: r["name"].lower())
-    
-    # ALWAYS restart background cache after search completes
-    # This ensures cache continues building even after foreground search is done
-    start_background_cache_build(force_refresh=False)
-    
-    return results  # Return ALL - frontends apply limit if needed
-
 
 def fetch_single_metadata(name, session=None):
     """Fetch metadata for one package.
@@ -1454,72 +1109,57 @@ def fetch_single_metadata(name, session=None):
 
 
 # ---------------------------------------------------------------------------
-# ENHANCED SEARCH (Full Cache)
+# SEARCH PLAN (single source of truth for every front end)
 # ---------------------------------------------------------------------------
 
-def enhanced_search(query, db, installed_map, explicit=False, override_limit=False):
-    """Full search with summaries (requires complete cache).
-    
-    Returns ALL matching packages - frontends apply display limits.
+def plan_search(words=None, packages=None, installed=False, outdated=False):
+    """Turn what the user typed into the search parameters gather_packages needs.
+
+    Used by the CLI, --raw and the TUI so they can never disagree.
+
+    words:    list of words, or one string (split on whitespace)
+    packages: explicit exact-lookup names (--packages), or None
+    installed / outdated: filter flags; with no query they search only the
+              installed packages, from cache, without touching PyPI
+
+    Returns (query, or_search, no_live_fetch):
+        --packages           -> list of exact names
+        several words        -> list, inclusive OR search
+        one word             -> lowercase string, normal substring search
+        nothing + filter     -> every installed package name, cache only
     """
-    q = query.strip().lower()
-    matches = []
-    
-    for canonical, pkg in db.items():
-        name = pkg["name"]
-        summary = pkg.get("summary", "")
-        
-        if explicit:
-            if not _is_explicit_match(q, name):
-                continue
-        else:
-            if not (_is_fuzzy_match(q, name) or (q in summary.lower())):
-                continue
-        
-        matches.append(canonical)
-    
-    # NO LIMIT - return all matches, frontends filter for display
-    
-    results = []
-    for canonical in matches:
-        pkg = _meta_entry_get(db, canonical)
-        if not pkg:
-            continue
-        name = pkg["name"]
-        latest = pkg.get("version", "unknown")
-        summary = pkg.get("summary", "")
-        installed = _installed_version(installed_map, canonical)
-        
-        if installed:
-            origin = _installed_origin(installed_map, canonicalize_name(name))
-            origin_tag = " [D]" if origin == "distro" else (" [S]" if (origin == "root" and not _is_root) else "")
-            cmp = compare_versions(installed, latest)
-            if cmp > 0:
-                status = "Outdated"
-                status_lines = [f"({installed})", "Outdated" + origin_tag]
-            elif cmp < 0:
-                status = "Newer"
-                status_lines = [f"({installed})", "Newer" + origin_tag]
-            else:
-                status = "Installed"
-                status_lines = [f"({installed})", "Installed" + origin_tag]
-        else:
-            origin = None
-            status = "Not Installed"
-            status_lines = ["Not Installed"]
-        
-        results.append({
-            "name": name,
-            "latest": latest,
-            "installed": installed,
-            "status": status,
-            "origin": origin,
-            "status_lines": status_lines,
-            "summary": summary,
-        })
-    
-    results.sort(key=lambda r: r["name"].lower())
-    return results
+    if isinstance(words, str):
+        words = words.split()
+    words = words or []
+    or_search = False
+    no_live_fetch = False
+    if packages:
+        query = [p.lower() for p in packages]
+    elif len(words) > 1:
+        query = [w.lower() for w in words]
+        or_search = True
+    elif len(words) == 1:
+        query = words[0].lower()
+    else:
+        query = ""
+    if not query and (installed or outdated):
+        query = list(build_installed_map().keys())
+        no_live_fetch = True
+    return query, or_search, no_live_fetch
+
+
+def query_label(query, or_search=False, generated=False):
+    """How a search query is shown in a banner (TUI and --raw share this).
+
+    generated: the query is the installed-package list built by plan_search,
+               not something the user typed, so name it instead of printing it.
+    Returns "" for an empty query; callers pick their own wording for that.
+    """
+    if generated:
+        return "installed packages"
+    if isinstance(query, list):
+        return (" OR " if or_search else ", ").join(query)
+    return query or ""
 
 
 # ---------------------------------------------------------------------------
